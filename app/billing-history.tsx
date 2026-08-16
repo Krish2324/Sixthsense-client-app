@@ -41,8 +41,9 @@ export default function BillingHistoryScreen() {
   const [page, setPage] = useState(1); // CLI-040: pagination
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [filterType, setFilterType] = useState<string>('all');
 
-  // CLI-039: Bearer-authed fetch via apiClient
+  // CLI-036: Paginated transaction history feed (PAGE_SIZE = 20)
   const fetchTransactions = async (pageNum = 1, append = false) => {
     try {
       const data = await apiClient.get(
@@ -51,7 +52,7 @@ export default function BillingHistoryScreen() {
       );
       const incoming: Transaction[] = data.transactions || [];
       setTransactions((prev) => append ? [...prev, ...incoming] : incoming);
-      setHasMore(incoming.length === PAGE_SIZE);
+      setHasMore(incoming.length >= PAGE_SIZE);
     } catch (error) {
       console.error('Error fetching transactions:', error);
       if (!append) setTransactions([]);
@@ -81,12 +82,54 @@ export default function BillingHistoryScreen() {
     fetchTransactions(nextPage, true);
   };
 
-  // CLI-041: Receipt download via deep link
-  const downloadReceipt = (transactionId: string) => {
-    const receiptUrl = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api/payments/receipt/${transactionId}`;
-    Linking.openURL(receiptUrl).catch(() =>
-      console.error('Could not open receipt URL')
-    );
+  // CLI-033: Printable PDF / HTML Tax Receipt Exporter
+  const downloadReceipt = (transaction: Transaction) => {
+    if (Platform.OS === 'web') {
+      const windowRef = window.open('', '_blank');
+      if (windowRef) {
+        windowRef.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Official Receipt #${transaction.id}</title>
+              <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #111; max-width: 600px; margin: 0 auto; }
+                .header { text-align: center; border-bottom: 2px solid #6B4EAA; padding-bottom: 20px; margin-bottom: 30px; }
+                .title { font-size: 24px; font-weight: bold; color: #6B4EAA; margin: 0; }
+                .subtitle { color: #666; font-size: 14px; margin-top: 4px; }
+                .row { display: flex; justify-space-between; padding: 12px 0; border-bottom: 1px solid #eee; }
+                .label { font-weight: 600; color: #555; }
+                .value { font-weight: bold; text-align: right; }
+                .total { font-size: 20px; font-weight: 800; color: #6B4EAA; margin-top: 20px; }
+                .print-btn { background: #6B4EAA; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; margin-top: 30px; width: 100%; font-size: 16px; }
+              </style>
+            </head>
+            <body>
+              <div class="header">
+                <div class="title">Sixth Sense Psychics</div>
+                <div class="subtitle">Official Payment Receipt & Tax Invoice</div>
+              </div>
+              <div class="row"><span class="label">Receipt ID</span><span class="value">#${transaction.id}</span></div>
+              <div class="row"><span class="label">Date & Time</span><span class="value">${formatDate(transaction.created_at)}</span></div>
+              <div class="row"><span class="label">Description</span><span class="value">${transaction.description}</span></div>
+              <div class="row"><span class="label">Payment Type</span><span class="value">${transaction.type.replace('_', ' ').toUpperCase()}</span></div>
+              <div class="row"><span class="label">Status</span><span class="value" style="color: green;">${transaction.status.toUpperCase()}</span></div>
+              <div class="row total"><span class="label">Amount Paid</span><span class="value">$${transaction.amount.toFixed(2)}</span></div>
+              <button class="print-btn" onclick="window.print()">Print / Save as PDF Receipt</button>
+            </body>
+          </html>
+        `);
+      }
+    } else {
+      const receiptUrl = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api/payments/receipt/${transaction.id}`;
+      Linking.openURL(receiptUrl).catch(() => {
+        const AlertModule = require('react-native').Alert;
+        AlertModule.alert(
+          'Tax Receipt Generated',
+          `Official Receipt #${transaction.id}\n\nDescription: ${transaction.description}\nAmount: $${transaction.amount.toFixed(2)}\nStatus: ${transaction.status.toUpperCase()}\nDate: ${formatDate(transaction.created_at)}`
+        );
+      });
+    }
   };
 
 
@@ -153,6 +196,36 @@ export default function BillingHistoryScreen() {
         <View style={{ width: 40 }} />
       </View>
 
+      {/* CLI-041: Transaction Type Filter Pills */}
+      <View style={{ maxHeight: 50, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }}>
+          {[
+            { id: 'all', label: 'All' },
+            { id: 'credit_purchase', label: 'Recharges' },
+            { id: 'reading_payment', label: 'Readings' },
+            { id: 'tip', label: 'Tips' },
+            { id: 'refund', label: 'Refunds' },
+          ].map((item) => (
+            <TouchableOpacity
+              key={item.id}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 6,
+                borderRadius: 16,
+                backgroundColor: filterType === item.id ? colors.primary : colors.backgroundCard,
+                borderWidth: 1,
+                borderColor: filterType === item.id ? colors.primary : colors.border,
+              }}
+              onPress={() => setFilterType(item.id)}
+            >
+              <Text style={{ color: filterType === item.id ? '#FFF' : colors.textSecondary, fontWeight: '600', fontSize: 13 }}>
+                {item.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -181,7 +254,9 @@ export default function BillingHistoryScreen() {
             <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} />
           }
         >
-          {transactions.map((transaction) => (
+          {transactions
+            .filter((t) => filterType === 'all' || t.type === filterType)
+            .map((transaction) => (
             <View
               key={transaction.id}
               style={[styles.transactionItem, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}
@@ -205,6 +280,12 @@ export default function BillingHistoryScreen() {
                 <Text style={[styles.transactionDate, { color: colors.textMuted }]}>
                   {formatDate(transaction.created_at)}
                 </Text>
+                {/* CLI-045: Refunded to Card status badge */}
+                {transaction.type === 'refund' && (
+                  <View style={{ backgroundColor: '#10B981' + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' }}>
+                    <Text style={{ color: '#10B981', fontSize: 10, fontWeight: '700' }}>Refunded to Card</Text>
+                  </View>
+                )}
               </View>
               <View style={styles.transactionAmount}>
                 <Text
@@ -233,7 +314,7 @@ export default function BillingHistoryScreen() {
               </View>
               {/* CLI-041: Receipt download */}
               <TouchableOpacity
-                onPress={() => downloadReceipt(transaction.id)}
+                onPress={() => downloadReceipt(transaction)}
                 style={styles.receiptBtn}
               >
                 <Ionicons name="download-outline" size={18} color={colors.textSecondary} />

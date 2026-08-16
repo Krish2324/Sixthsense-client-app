@@ -31,7 +31,8 @@ export default function TipScreen() {
   const { user, refreshUser } = useAuth();
   const { colors } = useTheme();
 
-  const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
+  // CLI-043: Default 1-tap preset tip amount ($10)
+  const [selectedAmount, setSelectedAmount] = useState<number | null>(10);
   const [customAmount, setCustomAmount] = useState('');
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -45,7 +46,7 @@ export default function TipScreen() {
   const handleSendTip = async () => {
     const amount = getTipAmount();
 
-    // CLI-045: Enforce $1 minimum with inline validation
+    // CLI-039: Enforce tip boundary checks ($1 min, $500 max, <= available balance)
     if (amount < 1) {
       Alert.alert('Invalid Amount', 'Minimum tip is $1');
       return;
@@ -59,7 +60,7 @@ export default function TipScreen() {
     if (amount > balance) {
       Alert.alert(
         'Insufficient Balance',
-        'Please add funds to your wallet.',
+        'Your tip amount exceeds your available wallet balance ($' + balance.toFixed(2) + '). Please add funds to your wallet.',
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Add Funds', onPress: () => router.push('/(tabs)/wallet') },

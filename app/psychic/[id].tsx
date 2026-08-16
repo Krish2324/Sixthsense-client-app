@@ -143,6 +143,19 @@ export default function PsychicProfileScreen() {
   };
 
   const handleStartService = (serviceType: 'chat' | 'phone' | 'video') => {
+    // CLI-030: Force account sign-in prompt for guest users
+    if (!user) {
+      Alert.alert(
+        'Account Required',
+        'Please sign in or create an account to start a reading with an advisor.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Sign In / Register', onPress: () => router.push('/(auth)/login') },
+        ]
+      );
+      return;
+    }
+
     if (psychic?.online_status !== 'online') {
       Alert.alert('Unavailable', 'This advisor is currently unavailable.');
       return;

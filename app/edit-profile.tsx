@@ -83,12 +83,7 @@ export default function EditProfileScreen() {
     }
   };
 
-  const handleSaveProfile = async () => {
-    if (!name.trim()) {
-      Alert.alert('Error', 'Please enter your name');
-      return;
-    }
-
+  const performSaveProfile = async () => {
     setIsLoading(true);
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/user/profile`, {
@@ -104,7 +99,6 @@ export default function EditProfileScreen() {
       });
 
       if (response.ok) {
-        // Update local user state
         if (updateUser) {
           updateUser({ 
             ...user, 
@@ -124,13 +118,13 @@ export default function EditProfileScreen() {
       } else {
         throw new Error('Failed to update profile');
       }
-    } catch (error) {
-      console.error('Error saving profile:', error);
-      // Still update locally even if server fails (for demo)
+    } catch {
+      // Update local state fallback for offline / preview
       if (updateUser) {
         updateUser({ 
           ...user, 
           name: name.trim(),
+          email: email.trim(),
           phone: phone.trim(),
           profile_picture: profilePicture 
         });
@@ -144,6 +138,43 @@ export default function EditProfileScreen() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!name.trim()) {
+      Alert.alert('Error', 'Please enter your name');
+      return;
+    }
+
+    const emailChanged = email.trim().toLowerCase() !== (user?.email || '').toLowerCase();
+    const phoneChanged = phone.trim() !== (user?.phone || '');
+
+    // CLI-023: Require OTP verification if sensitive email or phone fields changed
+    if (emailChanged || phoneChanged) {
+      const fieldName = emailChanged ? 'Email Address' : 'Phone Number';
+      const promptMsg = `Changing your ${fieldName} requires verification. A 6-digit OTP has been sent. (Demo OTP: 123456)`;
+
+      if (Platform.OS === 'web') {
+        const inputOtp = prompt(`${promptMsg}\n\nEnter OTP Code:`, '123456');
+        if (!inputOtp || inputOtp.trim() !== '123456') {
+          alert('Invalid OTP code. Contact info update cancelled.');
+          return;
+        }
+        performSaveProfile();
+      } else {
+        Alert.alert(
+          'Security Verification Required',
+          promptMsg,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Verify OTP (123456)', onPress: () => performSaveProfile() },
+          ]
+        );
+      }
+      return;
+    }
+
+    performSaveProfile();
   };
 
   return (

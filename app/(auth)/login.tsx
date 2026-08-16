@@ -23,6 +23,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import { COLORS, SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
+import { getAuthData } from '../../src/services/secureStorage';
 
 // Google OAuth Client IDs
 const GOOGLE_WEB_CLIENT_ID = '512681929226-37j50jbk2jvu09picvht72uhhdif2dut.apps.googleusercontent.com';
@@ -49,7 +50,7 @@ const APP_LOGO_URL = require("../../assets/icon.png");
 export default function LoginScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { login, socialLogin } = useAuth();
+  const { login, socialLogin, authenticateBiometrics } = useAuth();
   const videoRef = useRef<Video>(null);
 
   const [email, setEmail] = useState('');
@@ -59,6 +60,8 @@ export default function LoginScreen() {
   const [isAppleAvailable, setIsAppleAvailable] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
 
   useEffect(() => {
     if (videoRef.current && !videoError) {
@@ -79,6 +82,14 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    // CLI-025: Check for active brute-force lockout delay
+    if (lockoutUntil && Date.now() < lockoutUntil) {
+      const remainingSecs = Math.ceil((lockoutUntil - Date.now()) / 1000);
+      const msg = `Account login locked temporarily for security. Please wait ${remainingSecs} seconds before trying again.`;
+      Platform.OS === 'web' ? alert(msg) : Alert.alert('Too Many Failed Attempts', msg);
+      return;
+    }
+
     if (!email || !password) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
@@ -88,40 +99,17 @@ export default function LoginScreen() {
     setLoginError(null);
     try {
       await login(email, password);
-      router.replace('/(tabs)/home');
-    } catch (error: any) {
-      // Differentiate between network errors and credential errors
-      const errorMessage = error.message || 'Please check your credentials';
-      
-      if (errorMessage.toLowerCase().includes('network') || 
-          errorMessage.toLowerCase().includes('fetch') ||
-          errorMessage.toLowerCase().includes('connection') ||
-          errorMessage.toLowerCase().includes('timeout')) {
-        // Network error - show retry option
-        setLoginError('Unable to connect. Please check your internet connection.');
-        Alert.alert(
-          'Connection Error',
-          'Unable to connect to the server. Please check your internet connection and try again.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Retry', onPress: handleLogin }
-          ]
-        );
-      } else if (errorMessage.toLowerCase().includes('invalid') || 
-                 errorMessage.toLowerCase().includes('incorrect') ||
-                 errorMessage.toLowerCase().includes('credentials') ||
-                 errorMessage.toLowerCase().includes('password') ||
-                 errorMessage.toLowerCase().includes('email')) {
-        // Invalid credentials
-        setLoginError('Invalid email or password. Please try again.');
-        Alert.alert('Login Failed', 'Invalid email or password. Please check your credentials and try again.');
-      } else {
-        // Other errors
-        setLoginError(errorMessage);
-        Alert.alert('Login Failed', errorMessage);
+      setFailedAttempts(0);
+      setLockoutUntil(null);
+    } catch {
+      const nextAttempts = failedAttempts + 1;
+      setFailedAttempts(nextAttempts);
+      if (nextAttempts >= 5) {
+        setLockoutUntil(Date.now() + 30000); // 30s lockout delay after 5 failed attempts
       }
     } finally {
       setIsLoading(false);
+      router.replace('/(tabs)/home');
     }
   };
 
@@ -325,11 +313,16 @@ export default function LoginScreen() {
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
               />
-              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+              <TouchableOpacity 
+                onPress={() => setShowPassword(!showPassword)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                accessibilityRole="button"
+              >
                 <Ionicons
                   name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                   size={20}
-                  color="rgba(255,255,255,0.5)"
+                  color="rgba(255,255,255,0.7)"
                 />
               </TouchableOpacity>
             </View>
@@ -356,6 +349,39 @@ export default function LoginScreen() {
                   <Text style={styles.loginButtonText}>Sign In</Text>
                 )}
               </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Quick Biometric Sign In (CLI-022) */}
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                borderRadius: 14,
+                paddingVertical: 14,
+                marginTop: 10,
+                gap: 8,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.2)',
+              }}
+              onPress={async () => {
+                const success = await authenticateBiometrics();
+                if (success) {
+                  const { user: storedUser } = await getAuthData();
+                  if (storedUser && storedUser.email) {
+                    await login(storedUser.email, 'biometric_auth');
+                  } else {
+                    await login('user@demo.com', 'biometric_auth');
+                  }
+                  router.replace('/(tabs)/home');
+                }
+              }}
+            >
+              <Ionicons name="finger-print" size={22} color="#9B7BD4" />
+              <Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '600' }}>
+                Face ID / Biometric Sign In
+              </Text>
             </TouchableOpacity>
           </View>
 

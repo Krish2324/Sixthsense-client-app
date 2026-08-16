@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SPACING } from '../src/constants/theme';
 import { useAuth } from '../src/context/AuthContext';
 import { apiClient } from '../src/services/api';
+import { Audio } from 'expo-av';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const WS_URL = BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://');
@@ -59,6 +60,15 @@ export default function WaitingForAdvisorScreen() {
       ])
     );
     pulse.start();
+
+    // CLI-061 / CLI-062: Keep screen active & play ringtone even in silent mode
+    Audio.setAudioModeAsync({
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
+      shouldDuckAndroid: true,
+      allowsRecordingIOS: false,
+    }).catch(() => null);
+
     return () => pulse.stop();
   }, []);
   
@@ -271,9 +281,12 @@ export default function WaitingForAdvisorScreen() {
               {getServiceLabel()} • {minutes} min • ${rate}/min
             </Text>
             
-            {/* Countdown */}
+            {/* CLI-068: Countdown progress bar */}
             <View style={styles.countdownContainer}>
               <Text style={styles.countdownText}>{countdown}s</Text>
+              <View style={{ width: 200, height: 6, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
+                <View style={{ height: '100%', backgroundColor: COLORS.primary, width: `${(countdown / 60) * 100}%` }} />
+              </View>
               <Text style={styles.countdownLabel}>Request expires</Text>
             </View>
             

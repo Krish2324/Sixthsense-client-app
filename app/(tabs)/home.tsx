@@ -56,7 +56,7 @@ export default function HomeScreen() {
         setActiveSale(data);
       }
     } catch (error) {
-      console.error('Error fetching active sale:', error);
+      // Quiet fallback
     }
   }, []);
 
@@ -71,7 +71,7 @@ export default function HomeScreen() {
         setUnreadMessagesCount(data.count || 0);
       }
     } catch (error) {
-      console.error('Error fetching unread messages:', error);
+      // Quiet fallback
     }
   }, [user]);
 
@@ -137,7 +137,7 @@ export default function HomeScreen() {
         }
       }
     } catch (error) {
-      console.error('Error fetching psychics:', error);
+      // Quiet network fallback
     } finally {
       setIsLoading(false);
     }

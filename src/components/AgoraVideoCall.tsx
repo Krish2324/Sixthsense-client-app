@@ -30,6 +30,22 @@ export default function AgoraVideoCall({
   const [isLoading, setIsLoading] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(!isVideo);
+  // CLI-063: Audio route switcher (Speaker / Earpiece / Bluetooth)
+  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
+  // CLI-066: 1-Tap call reconnect state
+  const [hasError, setHasError] = useState(false);
+
+  const handleReconnectCall = () => {
+    setIsLoading(true);
+    setHasError(false);
+    webViewRef.current?.injectJavaScript(`initAgora(); true;`);
+  };
+
+  const toggleAudioRoute = () => {
+    const nextSpeaker = !isSpeakerOn;
+    setIsSpeakerOn(nextSpeaker);
+    webViewRef.current?.injectJavaScript(`if (window.setAudioRoute) window.setAudioRoute(${nextSpeaker}); true;`);
+  };
 
   const toggleMute = () => {
     const newMuted = !isMuted;
@@ -95,6 +111,10 @@ export default function AgoraVideoCall({
       overflow: hidden;
       border: 2px solid white;
       background: #2d2d44;
+      touch-action: none;
+      cursor: grab;
+      z-index: 10;
+      transition: width 0.2s, height 0.2s;
     }
     #local-video video { width: 100%; height: 100%; object-fit: cover; }
     #remote-video video { width: 100%; height: 100%; object-fit: cover; }
@@ -171,6 +191,16 @@ export default function AgoraVideoCall({
           }
         });
 
+        // CLI-064: Low-bandwidth network quality auto-audio fallback
+        client.on("network-quality", (stats) => {
+          if (stats.downlinkNetworkQuality > 4) {
+            if (localVideoTrack && localVideoTrack.enabled) {
+              localVideoTrack.setEnabled(false);
+              sendMessage("network-fallback", { message: "Weak connection: Downgraded to audio-only" });
+            }
+          }
+        });
+
         client.on("user-left", (user) => {
           sendMessage("user-left", { uid: user.uid });
           const remoteContainer = document.getElementById("remote-video");
@@ -180,11 +210,18 @@ export default function AgoraVideoCall({
         // Join channel
         await client.join(APP_ID, CHANNEL, TOKEN, UID);
 
-        // Create and publish local tracks
-        localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+        // CLI-065: Acoustic Echo Cancellation (AEC), Noise Suppression (ANS), Gain Control (AGC)
+        localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack({
+          AEC: true,
+          ANS: true,
+          AGC: true,
+        });
         
         if (IS_VIDEO) {
-          localVideoTrack = await AgoraRTC.createCameraVideoTrack();
+          // CLI-067: Optimized 480p video resolution to prevent phone overheating
+          localVideoTrack = await AgoraRTC.createCameraVideoTrack({
+            encoderConfig: "480p_1",
+          });
           localVideoTrack.play(document.getElementById("local-video"));
           await client.publish([localAudioTrack, localVideoTrack]);
         } else {
@@ -227,6 +264,35 @@ export default function AgoraVideoCall({
       sendMessage("call-ended");
     }
 
+    // CLI-069: Picture-in-picture touch drag and minimize listener
+    (function makeDraggable() {
+      const el = document.getElementById("local-video");
+      if (!el) return;
+      let isDragging = false, startX, startY, initialLeft, initialTop;
+
+      el.addEventListener("touchstart", (e) => {
+        isDragging = true;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        const rect = el.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+      });
+
+      el.addEventListener("touchmove", (e) => {
+        if (!isDragging) return;
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+        el.style.left = (initialLeft + dx) + "px";
+        el.style.top = (initialTop + dy) + "px";
+        el.style.right = "auto";
+      });
+
+      el.addEventListener("touchend", () => {
+        isDragging = false;
+      });
+    })();
+
     // Start
     initAgora();
   </script>
@@ -255,6 +321,21 @@ export default function AgoraVideoCall({
         </View>
       )}
 
+      {/* CLI-066: 1-Tap Call Reconnect Overlay */}
+      {hasError && (
+        <View style={styles.loadingOverlay}>
+          <Ionicons name="cloud-offline" size={48} color="#FF6B6B" />
+          <Text style={[styles.loadingText, { marginTop: 12, color: '#FF6B6B', fontWeight: '700' }]}>Call Disconnected</Text>
+          <TouchableOpacity
+            style={{ marginTop: 20, backgroundColor: '#9C6ADE', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 25, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+            onPress={handleReconnectCall}
+          >
+            <Ionicons name="refresh" size={18} color="#FFF" />
+            <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 15 }}>Reconnect Call</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Controls */}
       <View style={styles.controls}>
         <TouchableOpacity 
@@ -262,6 +343,13 @@ export default function AgoraVideoCall({
           onPress={toggleMute}
         >
           <Ionicons name={isMuted ? "mic-off" : "mic"} size={24} color="#FFF" />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.controlBtn, !isSpeakerOn && styles.controlBtnActive]} 
+          onPress={toggleAudioRoute}
+        >
+          <Ionicons name={isSpeakerOn ? "volume-high" : "headset"} size={24} color="#FFF" />
         </TouchableOpacity>
 
         {isVideo && (

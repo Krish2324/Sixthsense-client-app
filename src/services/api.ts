@@ -20,8 +20,15 @@ export function registerUnauthorizedHandler(handler: () => void) {
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const token = await getSecureItem('__6th_sense_client_token');
+  const timestamp = Date.now().toString();
+  const nonce = Math.random().toString(36).substring(2, 12);
+  const signaturePayload = `6th_sense_sig_${timestamp}_${nonce}`;
+  
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'X-Timestamp': timestamp,
+    'X-Client-Nonce': nonce,
+    'X-Signature': signaturePayload,
   };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;

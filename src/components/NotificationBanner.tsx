@@ -38,17 +38,17 @@ export default function NotificationBanner() {
     if (!user?.id) return;
     
     try {
-      const response = await fetch(`${BACKEND_URL}/api/notifications/user/${user.id}?limit=5`);
-      if (response.ok) {
-        const data = await response.json();
+      const response = await fetch(`${BACKEND_URL}/api/notifications/user/${user.id}?limit=5`).catch(() => null);
+      if (response && response.ok) {
+        const data = await response.json().catch(() => ({}));
         const unreadNotifications = (data.notifications || []).filter(
           (n: Notification) => !n.is_read
         );
         setNotifications(unreadNotifications);
         setIsVisible(unreadNotifications.length > 0);
       }
-    } catch (error) {
-      console.error('Error fetching notifications:', error);
+    } catch {
+      // Quiet fallback for preview & mobile sandbox
     }
   }, [user?.id]);
 

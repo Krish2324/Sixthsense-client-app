@@ -18,6 +18,9 @@
       "bundleIdentifier": "com.sixthsense.psychics",
       "buildNumber": "1",
       "usesAppleSignIn": true,
+      "entitlements": {
+        "com.apple.developer.applesignin": ["Default"]
+      },
       "infoPlist": {
         "NSCameraUsageDescription": "Video calls with psychic advisors",
         "NSMicrophoneUsageDescription": "Voice and video calls with advisors",
@@ -29,7 +32,9 @@
         "UIBackgroundModes": [
           "audio",
           "voip",
-          "remote-notification"
+          "remote-notification",
+          "fetch",
+          "processing"
         ]
       },
       "config": {
@@ -39,6 +44,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#6B4EAA"
       },
       "package": "com.sixthsense.psychics",
@@ -87,27 +93,35 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Video calls with psychic advisors",
-          "microphonePermission": "Voice calls with psychic advisors",
+          "cameraPermission": "Sixth Sense needs camera access for live video readings with your chosen psychic advisor.",
+          "microphonePermission": "Sixth Sense needs microphone access for live voice and video calls with your psychic advisor.",
           "recordAudioAndroid": true
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "Share photos in chat messages"
+          "photosPermission": "Share Tarot card photos and documents in chat messages"
         }
       ],
       [
         "expo-av",
         {
-          "microphonePermission": "Voice calls with psychic advisors"
+          "microphonePermission": "Sixth Sense needs microphone access for live voice and video calls with your psychic advisor."
         }
       ],
       "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "00000000-0000-0000-0000-000000000000"
+      }
     }
   }
 }

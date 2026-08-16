@@ -75,6 +75,12 @@ export default function PaymentSuccessScreen() {
               </LinearGradient>
             </View>
 
+            {/* CLI-038: Festive Bonus Celebration Badge */}
+            <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 20, borderWidth: 1, borderColor: '#F59E0B' }}>
+              <Ionicons name="sparkles" size={18} color="#D97706" />
+              <Text style={{ color: '#92400E', fontWeight: '700', fontSize: 14 }}>🎉 Free Bonus Reading Minutes Unlocked!</Text>
+            </View>
+
             <Text style={[styles.title, { color: colors.textPrimary }]}>
               Payment Successful!
             </Text>

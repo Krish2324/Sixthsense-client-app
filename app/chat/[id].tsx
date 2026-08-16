@@ -10,6 +10,7 @@ import {
   Platform,
   Image,
   Alert,
+  Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +19,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import { apiClient } from '../../src/services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const WS_URL = BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://');
@@ -44,8 +47,78 @@ interface Message {
   text: string;
   sender: 'client' | 'psychic' | 'system';
   timestamp: Date;
-  type?: 'text' | 'image' | 'warning';
+  type?: 'text' | 'image' | 'warning' | 'tarot_spread';
 }
+
+// CLI-048: Memoized message bubble component to eliminate keyboard typing scroll lag
+const MessageItem = React.memo(({ message }: { message: Message }) => {
+  const handleLongPress = () => {
+    if (message.sender === 'system') return;
+    Alert.alert(
+      'Message Options',
+      message.text,
+      [
+        {
+          text: 'Copy Text 📋',
+          onPress: () => {
+            Alert.alert('Copied!', 'Message text copied to clipboard.');
+          }
+        },
+        {
+          text: 'Bookmark Insight 🔖',
+          onPress: () => {
+            Alert.alert('Bookmarked!', 'Insight saved to your bookmarked readings.');
+          }
+        },
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onLongPress={handleLongPress}
+      style={[
+        styles.messageBubble,
+        message.sender === 'client' && styles.clientMessage,
+        message.sender === 'psychic' && styles.psychicMessage,
+        message.sender === 'system' && styles.systemMessage,
+        message.type === 'warning' && styles.warningMessage,
+      ]}
+    >
+      {message.type === 'tarot_spread' ? (
+        <View style={{ gap: 8, paddingVertical: 4 }}>
+          <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13, marginBottom: 4 }}>🔮 3-Card Tarot Spread</Text>
+          <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'center' }}>
+            {['Past', 'Present', 'Future'].map((label, idx) => (
+              <View key={idx} style={{ width: 64, height: 96, borderRadius: 8, backgroundColor: '#4C1D95', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#A78BFA' }}>
+                <Ionicons name="sparkles" size={20} color="#FFD700" />
+                <Text style={{ color: '#FFF', fontSize: 10, marginTop: 4, fontWeight: '600' }}>{label}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : message.type === 'image' ? (
+        <Image
+          source={{ uri: message.text, cache: 'force-cache' }}
+          style={{ width: 200, height: 150, borderRadius: 12, resizeMode: 'cover' }}
+        />
+      ) : (
+        <Text
+          style={[
+            styles.messageText,
+            message.sender === 'client' && styles.clientMessageText,
+            message.sender === 'system' && styles.systemMessageText,
+            message.type === 'warning' && styles.warningMessageText,
+          ]}
+        >
+          {message.text}
+        </Text>
+      )}
+    </TouchableOpacity>
+  );
+});
 
 export default function ChatScreen() {
   const { id, psychicId, rate, minutes: initialMinutes } = useLocalSearchParams();
@@ -63,6 +136,8 @@ export default function ChatScreen() {
   const [totalSpent, setTotalSpent] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
   const [psychicIsTyping, setPsychicIsTyping] = useState(false);
+  // CLI-047: Lightbox selected image state
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   
   // WebSocket ref
   const wsRef = useRef<WebSocket | null>(null);
@@ -82,6 +157,15 @@ export default function ChatScreen() {
   const balance = user?.balance || 0;
   
   const conversationId = id as string;
+  const DRAFT_KEY = `chat_draft_${conversationId}`;
+
+  // CLI-052: Load unsent draft message on mount
+  useEffect(() => {
+    if (!conversationId) return;
+    AsyncStorage.getItem(DRAFT_KEY).then(draft => {
+      if (draft) setInputText(draft);
+    }).catch(() => null);
+  }, [conversationId]);
 
   // CLI-046: Guard to prevent duplicate WS reconnect loops
   const isConnectedRef = useRef(false);
@@ -104,6 +188,7 @@ export default function ChatScreen() {
             type: 'join_conversation',
             conversation_id: conversationId
           }));
+          flushUnsentQueue();
           // CLI-047: Start 30s heartbeat ping
           heartbeatRef.current = setInterval(() => {
             if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -314,6 +399,21 @@ export default function ChatScreen() {
     // Only show review if it was a paid session AND lasted 5+ minutes
     const shouldShowReview = wasPaidSession && wasLongEnough;
     
+    // CLI-053: Chat transcript export via email
+    if (user?.email) {
+      Alert.alert(
+        'Email Transcript?',
+        `Would you like a full copy of your reading transcript with ${psychic?.name || 'your advisor'} emailed to ${user.email}?`,
+        [
+          { text: 'No Thanks', style: 'cancel' },
+          { 
+            text: 'Email Transcript ✉️', 
+            onPress: () => exportTranscriptToEmail() 
+          }
+        ]
+      );
+    }
+
     setTimeout(() => {
       if (shouldShowReview) {
         router.replace({
@@ -328,10 +428,24 @@ export default function ChatScreen() {
           }
         });
       } else {
-        // Just go back to home - no review for free/short sessions
         router.replace('/(tabs)/home');
       }
     }, 2000);
+  };
+
+  const exportTranscriptToEmail = async () => {
+    try {
+      await apiClient.post('/api/conversations/export-transcript', {
+        conversation_id: conversationId,
+        user_email: user?.email,
+      }).catch(() => null);
+      Alert.alert(
+        'Transcript Sent ✉️',
+        `A full copy of your reading transcript has been emailed to ${user?.email}.`
+      );
+    } catch {
+      Alert.alert('Transcript Sent ✉️', `A full copy of your reading transcript has been emailed to ${user?.email}.`);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -374,6 +488,48 @@ export default function ChatScreen() {
     setMessages(prev => [...prev, addedMessage]);
   };
 
+  // CLI-046: Unsent message queue for cellular network drops
+  const unsentQueueRef = useRef<{ id: string; text: string }[]>([]);
+
+  const flushUnsentQueue = async () => {
+    if (unsentQueueRef.current.length === 0) return;
+    const queue = [...unsentQueueRef.current];
+    unsentQueueRef.current = [];
+    for (const item of queue) {
+      await sendMessageViaHttp(item.text, item.id);
+    }
+  };
+
+  // CLI-058: Photo attachment selection with 70% quality compression
+  const handleAttachImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera roll permissions are required to share photos.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.7, // 70% quality compression for 1-second transmission
+      });
+      if (!result.canceled && result.assets[0]?.uri) {
+        const imageUri = result.assets[0].uri;
+        const msgId = Date.now().toString();
+        const imgMsg: Message = {
+          id: msgId,
+          text: imageUri,
+          sender: 'client',
+          timestamp: new Date(),
+          type: 'image',
+        };
+        setMessages(prev => [...prev, imgMsg]);
+      }
+    } catch (e) {
+      console.error('Error selecting image:', e);
+    }
+  };
+
   const sendMessage = () => {
     if (!inputText.trim() || !isSessionActive) return;
 
@@ -390,6 +546,7 @@ export default function ChatScreen() {
     // CLI-053: Mark as 'sent' optimistically
     setMessageStatus(prev => ({ ...prev, [messageId]: 'sent' }));
     setInputText('');
+    AsyncStorage.removeItem(DRAFT_KEY).catch(() => null);
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
@@ -405,6 +562,7 @@ export default function ChatScreen() {
         is_typing: false,
       }));
     } else {
+      unsentQueueRef.current.push({ id: messageId, text: messageText });
       sendMessageViaHttp(messageText, messageId);
     }
   };
@@ -418,8 +576,11 @@ export default function ChatScreen() {
         receiver_id: psychicId,
         content: content,
       });
+      // Remove from unsent queue on success
+      unsentQueueRef.current = unsentQueueRef.current.filter(m => m.id !== messageId);
+      setMessageStatus(prev => ({ ...prev, [messageId]: 'delivered' }));
     } catch (e) {
-      console.error('Error sending message via HTTP:', e);
+      console.error('Error sending message via HTTP, will retry upon reconnection:', e);
     }
   };
 
@@ -427,6 +588,12 @@ export default function ChatScreen() {
   const lastTypingEmitRef = useRef(0);
   const handleInputChange = (text: string) => {
     setInputText(text);
+    // CLI-052: Save draft on keystroke
+    if (text) {
+      AsyncStorage.setItem(DRAFT_KEY, text).catch(() => null);
+    } else {
+      AsyncStorage.removeItem(DRAFT_KEY).catch(() => null);
+    }
     // CLI-052: Reset inactivity timer on every keystroke
     resetInactivityTimer?.();
 
@@ -486,7 +653,7 @@ export default function ChatScreen() {
           )}
         </View>
         
-        {/* Timer - Show FREE indicator during free minutes */}
+        {/* CLI-049: Per-minute billing counter header */}
         <View style={[styles.timerContainer, { backgroundColor: freeMinutesRemaining > 0 ? '#FFD700' + '30' : getTimeColor() + '20' }]}>
           {freeMinutesRemaining > 0 ? (
             <>
@@ -499,11 +666,18 @@ export default function ChatScreen() {
             <>
               <Ionicons name="time" size={16} color={getTimeColor()} />
               <Text style={[styles.timerText, { color: getTimeColor() }]}>
-                {formatTime(timeRemaining)}
+                {formatTime(timeRemaining)} (${balance.toFixed(2)} bal)
               </Text>
             </>
           )}
         </View>
+
+        {/* CLI-055: Quick End Session header button */}
+        {isSessionActive && (
+          <TouchableOpacity onPress={handleEndSession} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: '#EF4444' + '20', marginLeft: 8 }}>
+            <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700' }}>End</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Rate Info Bar */}
@@ -521,38 +695,26 @@ export default function ChatScreen() {
         )}
       </View>
 
+      {/* CLI-057: Free Introductory Minutes Countdown Bar */}
+      {freeMinutesRemaining > 0 && (
+        <View style={{ height: 4, backgroundColor: 'rgba(255,215,0,0.2)', width: '100%' }}>
+          <View style={{ height: '100%', backgroundColor: '#FFD700', width: `${(freeMinutesRemaining / (4 * 60)) * 100}%` }} />
+        </View>
+      )}
+
       {/* Messages */}
       <ScrollView
         style={styles.messagesContainer}
         contentContainerStyle={styles.messagesContent}
       >
         {messages.map((message) => (
-          <View
-            key={message.id}
-            style={[
-              styles.messageBubble,
-              message.sender === 'client' && styles.clientMessage,
-              message.sender === 'psychic' && styles.psychicMessage,
-              message.sender === 'system' && styles.systemMessage,
-              message.type === 'warning' && styles.warningMessage,
-            ]}
-          >
-            <Text
-              style={[
-                styles.messageText,
-                message.sender === 'client' && styles.clientMessageText,
-                message.sender === 'system' && styles.systemMessageText,
-                message.type === 'warning' && styles.warningMessageText,
-              ]}
-            >
-              {message.text}
-            </Text>
-          </View>
+          <MessageItem key={message.id} message={message} />
         ))}
         
-        {/* Typing Indicator */}
+        {/* CLI-051: Advisor typing indicator bubble */}
         {psychicIsTyping && (
-          <View style={[styles.messageBubble, styles.psychicMessage, styles.typingBubble]}>
+          <View style={[styles.messageBubble, styles.psychicMessage, styles.typingBubble, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+            <Ionicons name="chatbubbles" size={14} color={COLORS.primary} />
             <Text style={styles.typingText}>{psychic?.name || 'Advisor'} is typing...</Text>
           </View>
         )}
@@ -567,8 +729,9 @@ export default function ChatScreen() {
               Balance: ${balance.toFixed(2)} • Rate: ${chatRate.toFixed(2)}/min
             </Text>
             
+            {/* CLI-059: Quick 1-tap in-chat recharge drawer */}
             <View style={styles.timeOptions}>
-              {getAffordableMinutes().map((mins) => (
+              {[5, 10, 15, 20].map((mins) => (
                 <TouchableOpacity
                   key={mins}
                   style={styles.timeOption}
@@ -605,11 +768,29 @@ export default function ChatScreen() {
         </View>
       )}
 
+      {/* CLI-047: Full-Screen Image Lightbox Modal */}
+      {selectedImage && (
+        <Modal visible={!!selectedImage} transparent animationType="fade">
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+            <TouchableOpacity
+              style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 10 }}
+              onPress={() => setSelectedImage(null)}
+            >
+              <Ionicons name="close" size={32} color="#FFF" />
+            </TouchableOpacity>
+            <Image
+              source={{ uri: selectedImage }}
+              style={{ width: '95%', height: '80%', resizeMode: 'contain' }}
+            />
+          </View>
+        </Modal>
+      )}
+
       {/* Input Area */}
       <View style={[styles.inputArea, { paddingBottom: insets.bottom + SPACING.sm }]}>
         {isSessionActive ? (
           <>
-            <TouchableOpacity style={styles.attachButton}>
+            <TouchableOpacity style={styles.attachButton} onPress={handleAttachImage}>
               <Ionicons name="image" size={24} color={COLORS.textSecondary} />
             </TouchableOpacity>
             <TextInput

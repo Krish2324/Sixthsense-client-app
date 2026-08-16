@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "512681929226",
+    "firebase_url": "https://sixth-sense-psychics-default-rtdb.firebaseio.com",
     "project_id": "sixth-sense-psychics",
     "storage_bucket": "sixth-sense-psychics.firebasestorage.app"
   },

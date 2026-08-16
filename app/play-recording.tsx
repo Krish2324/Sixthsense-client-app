@@ -37,6 +37,16 @@ export default function PlayRecordingScreen() {
   const [playbackDuration, setPlaybackDuration] = useState(parseInt(duration || '0'));
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // CLI-050: Audio playback speed state (1.0x, 1.5x, 2.0x)
+  const [playbackRate, setPlaybackRate] = useState<number>(1.0);
+
+  const togglePlaybackSpeed = async () => {
+    const nextRate = playbackRate === 1.0 ? 1.5 : playbackRate === 1.5 ? 2.0 : 1.0;
+    setPlaybackRate(nextRate);
+    if (sound) {
+      await sound.setRateAsync(nextRate, true).catch(() => null);
+    }
+  };
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -220,6 +230,15 @@ export default function PlayRecordingScreen() {
               
               <TouchableOpacity style={styles.controlButton} disabled={!!loadError}>
                 <Ionicons name="play-forward" size={28} color={loadError ? colors.textMuted + '50' : colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* CLI-050: Speed toggle button */}
+              <TouchableOpacity
+                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.primary + '20', marginLeft: 8 }}
+                onPress={togglePlaybackSpeed}
+                disabled={!!loadError}
+              >
+                <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '700' }}>{playbackRate}x</Text>
               </TouchableOpacity>
             </View>
             

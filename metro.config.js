@@ -5,12 +5,14 @@ const { FileStore } = require('metro-cache');
 
 const config = getDefaultConfig(__dirname);
 
-// Use a stable on-disk store (shared across web/android)
-const root = process.env.METRO_CACHE_ROOT || path.join(__dirname, '.metro-cache');
+// Use a stable on-disk store isolated for client app (CLI-012)
+const root = process.env.METRO_CACHE_ROOT || path.join(__dirname, '.metro-cache-client');
 config.cacheStores = [
   new FileStore({ root: path.join(root, 'cache') }),
 ];
 
+// Explicit asset extensions for custom audio ringtones & notifications (CLI-004)
+config.resolver.assetExts.push('wav', 'mp3', 'm4a', 'aac');
 
 // // Exclude unnecessary directories from file watching
 // config.watchFolders = [__dirname];

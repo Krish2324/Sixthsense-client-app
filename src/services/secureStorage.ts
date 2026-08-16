@@ -44,13 +44,14 @@ export const removeSecureItem = async (key: string): Promise<void> => {
   }
 };
 
-// CLI-025: Strip PII fields before storing user data
+// CLI-016: Strip sensitive PII fields and enforce hardware-backed SecureStore
 const sanitizeUserForStorage = (user: any): any => {
   const sanitized = { ...user };
   delete sanitized.ssn;
   delete sanitized.tax_id;
   delete sanitized.card_number;
   delete sanitized.cvv;
+  delete sanitized.password_hash;
   return sanitized;
 };
 
@@ -70,4 +71,21 @@ export const getAuthData = async (): Promise<{ token: string | null; user: any |
 export const clearAuthData = async (): Promise<void> => {
   await removeSecureItem(TOKEN_KEY);
   await removeSecureItem(USER_KEY);
+};
+
+// CLI-028: Hardware-backed encrypted chat transcript cache
+export const saveEncryptedChatMessages = async (chatId: string, messages: any[]): Promise<void> => {
+  const cacheKey = `__6th_sense_chat_msgs_${chatId}`;
+  await setSecureItem(cacheKey, JSON.stringify(messages));
+};
+
+export const getEncryptedChatMessages = async (chatId: string): Promise<any[]> => {
+  const cacheKey = `__6th_sense_chat_msgs_${chatId}`;
+  const raw = await getSecureItem(cacheKey);
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
 };

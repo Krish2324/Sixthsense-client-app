@@ -28,8 +28,25 @@ export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    let timer: any = null;
+    if (cooldown > 0) {
+      timer = setInterval(() => setCooldown((prev) => prev - 1), 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [cooldown]);
 
   const handleSubmit = async () => {
+    if (cooldown > 0) {
+      const msg = `Please wait ${cooldown} seconds before requesting another reset link.`;
+      Platform.OS === 'web' ? alert(msg) : Alert.alert('Rate Limited', msg);
+      return;
+    }
+
     if (!email.trim()) {
       const msg = 'Please enter your email address.';
       Platform.OS === 'web' ? alert(msg) : Alert.alert('Email Required', msg);
@@ -54,12 +71,12 @@ export default function ForgotPasswordScreen() {
         body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
 
-      const data = await response.json();
+      await response.json().catch(() => null);
 
-      // Always show success to prevent email enumeration
+      setCooldown(60);
       setIsSubmitted(true);
     } catch (error) {
-      // Still show success even on error (security best practice)
+      setCooldown(60);
       setIsSubmitted(true);
     } finally {
       setIsSubmitting(false);

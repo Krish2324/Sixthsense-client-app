@@ -8,7 +8,11 @@ yarn.lock
 .expo/
 .expo-shared/
 .metro-cache/
+.metro-cache-client/
 .metro-health-check*
+.haste-map-*
+.swc/
+.expo-source/
 dist/
 web-build/
 # @generated expo-cli sync-2b81b286409207a5da26e14c78851eb30d8ccbdb

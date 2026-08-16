@@ -37,6 +37,22 @@ export default function ResetPasswordScreen() {
   useEffect(() => {
     if (!token) {
       setError('Invalid reset link. Please request a new password reset.');
+      return;
+    }
+
+    // CLI-029: Validate reset token payload timestamp if JWT/structured
+    try {
+      if (token.includes('.')) {
+        const payloadBase64 = token.split('.')[1];
+        if (payloadBase64) {
+          const decoded = JSON.parse(atob(payloadBase64));
+          if (decoded.exp && decoded.exp * 1000 < Date.now()) {
+            setError('Password reset link has expired. Please request a new link.');
+          }
+        }
+      }
+    } catch {
+      // Non-JWT token string
     }
   }, [token]);
 
