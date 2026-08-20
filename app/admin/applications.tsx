@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,13 +7,14 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING } from '../../src/constants/theme';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.113:8000';
 
 export default function ApplicationsScreen() {
   const insets = useSafeAreaInsets();
@@ -21,51 +22,35 @@ export default function ApplicationsScreen() {
 
   const [applications, setApplications] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    fetchApplications();
-  }, []);
+  const [refreshing, setRefreshing] = useState(false);
 
   const fetchApplications = async () => {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/admin/applications`);
+      const response = await fetch(`${BACKEND_URL}/api/admin/applications?status=all`);
       if (response.ok) {
         const data = await response.json();
-        setApplications(data);
+        setApplications(Array.isArray(data) ? data : (data.applications || []));
       } else {
-        // Mock data
-        setApplications([
-          {
-            id: 'app1',
-            full_name: 'Mystic Luna',
-            email: 'luna@example.com',
-            experience_years: 8,
-            specialties: ['Card Reading Reading', 'Clairvoyance'],
-            reading_methods: ['chat', 'video'],
-            bio: 'I have been practicing card reading for over 8 years...',
-            chat_rate: 3.99,
-            created_at: '2024-01-20',
-            status: 'pending',
-          },
-          {
-            id: 'app2',
-            full_name: 'Star Reader Amy',
-            email: 'amy@example.com',
-            experience_years: 5,
-            specialties: ['Astrology', 'Numerology'],
-            reading_methods: ['chat', 'phone'],
-            bio: 'Certified astrologer with deep knowledge...',
-            chat_rate: 2.99,
-            created_at: '2024-01-19',
-            status: 'pending',
-          },
-        ]);
+        setApplications([]);
       }
     } catch (error) {
       console.error('Error fetching applications:', error);
+      setApplications([]);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchApplications();
+    }, [])
+  );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchApplications();
+    setRefreshing(false);
   };
 
   const handleApprove = async (app: any) => {
@@ -137,15 +122,25 @@ export default function ApplicationsScreen() {
           <ActivityIndicator size="large" color={COLORS.primary} />
         </View>
       ) : applications.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="checkmark-circle" size={60} color={COLORS.online} />
-          <Text style={styles.emptyTitle}>All Caught Up!</Text>
-          <Text style={styles.emptySubtitle}>No pending applications</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
+          }
+        >
+          <View style={styles.emptyContainer}>
+            <Ionicons name="checkmark-circle" size={60} color={COLORS.online} />
+            <Text style={styles.emptyTitle}>All Caught Up!</Text>
+            <Text style={styles.emptySubtitle}>No pending applications</Text>
+          </View>
+        </ScrollView>
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
+          }
         >
           {applications.map((app) => (
             <View key={app.id} style={styles.appCard}>

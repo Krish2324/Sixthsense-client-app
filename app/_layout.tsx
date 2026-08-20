@@ -6,14 +6,25 @@ import { AuthProvider } from '../src/context/AuthContext';
 import { ThemeProvider, useTheme } from '../src/context/ThemeContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AnimatedSplash from '../src/components/AnimatedSplash';
-import * as Notifications from 'expo-notifications';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Linking from 'expo-linking';
 
 // Logo image - using require for local asset
 const LOGO_IMAGE = require('../assets/icon.png');
 
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient || (Constants as any).appOwnership === 'expo';
+
+let Notifications: any = null;
+if (!isExpoGo && Platform.OS !== 'web') {
+  try {
+    Notifications = require('expo-notifications');
+  } catch (e) {
+    console.log('expo-notifications not available');
+  }
+}
+
 // 1. Foreground handler - MODULE SCOPE, before any component
-if (Platform.OS !== 'web') {
+if (Notifications && Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
@@ -26,7 +37,7 @@ if (Platform.OS !== 'web') {
 }
 
 // 2. Android channel - MODULE SCOPE, before any component
-if (Platform.OS === 'android') {
+if (Notifications && Platform.OS === 'android') {
   Notifications.setNotificationChannelAsync('default', {
     name: 'Default',
     importance: Notifications.AndroidImportance.MAX,
@@ -42,11 +53,11 @@ function RootLayoutContent() {
   const router = useRouter();
 
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    if (Platform.OS === 'web' || !Notifications) return;
 
     // 3. Warm tap - user taps notification while app is open
     const tapSub = Notifications.addNotificationResponseReceivedListener(
-      (response) => {
+      (response: any) => {
         const data = response.notification.request.content.data || {};
         const url = data.deeplink || data.action_url;
         if (!url) return;
@@ -57,7 +68,7 @@ function RootLayoutContent() {
     );
 
     // 4. Cold-start tap - user tapped notification while app was killed
-    Notifications.getLastNotificationResponseAsync().then((response) => {
+    Notifications.getLastNotificationResponseAsync().then((response: any) => {
       if (!response) return;
       const data = response.notification.request.content.data || {};
       const url = data.deeplink || data.action_url;
@@ -68,7 +79,7 @@ function RootLayoutContent() {
 
     // Cleanup
     return () => {
-      tapSub.remove();
+      tapSub?.remove();
     };
   }, [router]);
   

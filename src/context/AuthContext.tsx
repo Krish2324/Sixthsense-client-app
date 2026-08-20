@@ -1,8 +1,19 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Platform, Alert } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { saveAuthData, getAuthData, clearAuthData } from '../services/secureStorage';
 import { registerUnauthorizedHandler } from '../services/api';
+
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient || (Constants as any).appOwnership === 'expo';
+
+let Notifications: any = null;
+if (!isExpoGo && Platform.OS !== 'web') {
+  try {
+    Notifications = require('expo-notifications');
+  } catch (e) {
+    console.log('expo-notifications not available');
+  }
+}
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // CLI-018: 15-min inactivity auto-logout
@@ -12,7 +23,7 @@ console.log('AuthContext BACKEND_URL:', BACKEND_URL);
 
 // Register push token with backend
 async function registerPushToken(userId: string) {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web' || isExpoGo || !Notifications) return;
   try {
     const { status } = await Notifications.requestPermissionsAsync();
     if (status !== 'granted') return;
