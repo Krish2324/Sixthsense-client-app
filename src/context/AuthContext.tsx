@@ -15,7 +15,7 @@ if (!isExpoGo && Platform.OS !== 'web') {
   }
 }
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // CLI-018: 15-min inactivity auto-logout
 
 // Log for debugging
@@ -202,7 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     try {
-      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.113:8000';
+      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
 
@@ -249,7 +249,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = async (email: string, password: string, name: string, birthDate?: string) => {
     try {
-      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.113:8000';
+      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
 

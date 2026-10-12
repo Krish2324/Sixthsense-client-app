@@ -39,7 +39,7 @@ const CREDIT_PACKAGES = [
 
 export default function WalletScreen() {
   const insets = useSafeAreaInsets();
-  const { user, token, refreshUser } = useAuth();
+  const { user, token, refreshUser, updateUser } = useAuth();
   const { colors } = useTheme();
   const router = useRouter();
 

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sixth Sense Psychics",
     "slug": "sixth-sense-psychics",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "sixthsensepsychics",
@@ -48,7 +48,7 @@
         "backgroundColor": "#6B4EAA"
       },
       "package": "com.sixthsense.psychics",
-      "versionCode": 1,
+      "versionCode": 4,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "CAMERA",
@@ -118,9 +118,6 @@
     "extra": {
       "router": {
         "origin": false
-      },
-      "eas": {
-        "projectId": "00000000-0000-0000-0000-000000000000"
       }
     }
   }
