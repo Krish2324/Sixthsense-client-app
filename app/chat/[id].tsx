@@ -141,7 +141,7 @@ export default function ChatScreen() {
   
   // WebSocket ref
   const wsRef = useRef<WebSocket | null>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<any>(null);
   
   // CLI-053: Delivery receipt state per message ('sent' | 'delivered')
   const [messageStatus, setMessageStatus] = useState<Record<string, 'sent' | 'delivered'>>({});
@@ -208,23 +208,31 @@ export default function ChatScreen() {
             if (data.type === 'pong') {
               // CLI-047: Clear pong timeout on receipt
               if (pongTimeoutRef.current) clearTimeout(pongTimeoutRef.current);
-            } else if (data.type === 'new_message') {
-              const msg = data.message;
+            } else if (data.type === 'new_message' || data.type === 'message') {
+              const msg = data.message || data;
               const newMsg: Message = {
-                id: msg.id,
-                text: msg.content,
+                id: msg.id || `msg-${Date.now()}`,
+                text: msg.content || msg.text || '',
                 sender: msg.sender_id === user.id ? 'client' : 'psychic',
-                timestamp: new Date(msg.created_at),
+                timestamp: new Date(msg.created_at || msg.timestamp || Date.now()),
               };
-              setMessages(prev => [...prev, newMsg]);
+              setMessages(prev => {
+                if (prev.some(m => m.id === newMsg.id)) return prev;
+                return [...prev, newMsg];
+              });
               setPsychicIsTyping(false);
               // CLI-053: Mark as delivered when ACK received
               if (msg.sender_id === user.id) {
                 setMessageStatus(prev => ({ ...prev, [msg.id]: 'delivered' }));
               }
-            } else if (data.type === 'typing_indicator') {
+            } else if (data.type === 'typing_indicator' || data.type === 'typing') {
               if (data.user_id !== user.id) {
                 setPsychicIsTyping(data.is_typing);
+              }
+            } else if (data.type === 'one_minute_warning') {
+              if (!hasShownWarning) {
+                showOneMinuteWarning();
+                setHasShownWarning(true);
               }
             } else if (data.type === 'message_sent') {
               // CLI-053: Mark as sent on ack
@@ -297,6 +305,30 @@ export default function ChatScreen() {
       }
       
       setMessages(welcomeMessages);
+
+      // Load existing message history for this conversation/session
+      try {
+        const historyRes = await fetch(`${BACKEND_URL}/api/messages/conversation/${conversationId}?user_id=${user?.id || 'client'}`);
+        if (historyRes.ok) {
+          const historyData = await historyRes.json();
+          if (Array.isArray(historyData) && historyData.length > 0) {
+            const loadedMsgs: Message[] = historyData.map((m: any) => ({
+              id: m.id,
+              text: m.content,
+              sender: m.sender_id === user?.id ? 'client' : 'psychic',
+              timestamp: new Date(m.created_at || Date.now()),
+            }));
+            setMessages(prev => {
+              const map = new Map();
+              prev.forEach(m => map.set(m.id, m));
+              loadedMsgs.forEach(m => map.set(m.id, m));
+              return Array.from(map.values());
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching conversation history:', err);
+      }
     } catch (error) {
       console.error('Error fetching psychic:', error);
     }
@@ -375,6 +407,15 @@ export default function ChatScreen() {
     };
     setMessages(prev => [...prev, warningMessage]);
     setShowAddTimeModal(true);
+
+    // Broadcast 1-minute warning to advisor over WebSocket
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'one_minute_warning',
+        conversation_id: conversationId,
+        receiver_id: psychicId,
+      }));
+    }
   };
 
   const endSession = () => {

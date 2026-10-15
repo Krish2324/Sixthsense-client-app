@@ -268,10 +268,16 @@ export default function LoginScreen() {
           {/* Back Button */}
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.push('/landing')}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/(auth)/welcome');
+              }
+            }}
           >
             <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-            <Text style={styles.backButtonText}>Back to Website</Text>
+            <Text style={styles.backButtonText}>Back</Text>
           </TouchableOpacity>
 
           {/* Header */}

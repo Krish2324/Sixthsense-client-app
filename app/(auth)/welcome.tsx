@@ -94,31 +94,30 @@ export default function WelcomeScreen() {
               <Ionicons name="chatbubbles" size={22} color="#4CD964" />
             </View>
             <View style={styles.featureText}>
-              <Text style={styles.featureTitle}>Live Chat</Text>
-              <Text style={styles.featureDesc}>Real-time text guidance</Text>
+              <Text style={styles.featureTitle}>Live Chat Readings</Text>
+              <Text style={styles.featureDesc}>Real-time private messaging 24/7</Text>
             </View>
           </View>
 
           <View style={styles.featureItem}>
-            <View style={[styles.featureIcon, { backgroundColor: 'rgba(232, 160, 184, 0.2)' }]}>
-              <Ionicons name="call" size={22} color="#E8A0B8" />
+            <View style={[styles.featureIcon, { backgroundColor: 'rgba(255, 215, 0, 0.2)' }]}>
+              <Ionicons name="gift" size={22} color="#FFD700" />
             </View>
             <View style={styles.featureText}>
-              <Text style={styles.featureTitle}>Live Phone Readings</Text>
-              <Text style={styles.featureDesc}>Voice calls with expert advisors</Text>
+              <Text style={styles.featureTitle}>4 Free Minutes</Text>
+              <Text style={styles.featureDesc}>Complimentary reading for all new clients</Text>
             </View>
           </View>
 
           <View style={styles.featureItem}>
             <View style={[styles.featureIcon, { backgroundColor: 'rgba(155, 123, 212, 0.2)' }]}>
-              <Ionicons name="videocam" size={22} color="#9B7BD4" />
+              <Ionicons name="shield-checkmark" size={22} color="#9B7BD4" />
             </View>
             <View style={styles.featureText}>
-              <Text style={styles.featureTitle}>Live Video Readings</Text>
-              <Text style={styles.featureDesc}>Face-to-face sessions</Text>
+              <Text style={styles.featureTitle}>Verified Advisors</Text>
+              <Text style={styles.featureDesc}>Authentic spiritual and psychic guidance</Text>
             </View>
           </View>
-
         </View>
 
         {/* Buttons */}

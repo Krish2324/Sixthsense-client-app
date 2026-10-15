@@ -323,13 +323,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshUser = async () => {
-    if (!token) return;
     try {
-      const response = await fetch(`${BACKEND_URL}/api/auth/me?token=${token}`);
-      if (response.ok) {
-        const userData = await response.json();
-        setUser(userData);
-        await saveAuthData(token, userData);
+      if (token && !token.startsWith('mock_')) {
+        const response = await fetch(`${BACKEND_URL}/api/auth/me?token=${token}`).catch(() => null);
+        if (response && response.ok) {
+          const userData = await response.json();
+          setUser(userData);
+          await saveAuthData(token, userData);
+          return;
+        }
+      }
+      
+      // Fallback: If auth/me didn't succeed or user is using local session, query wallet directly by user.id
+      const { user: currentUser } = await getAuthData();
+      const activeUserId = user?.id || currentUser?.id;
+      if (activeUserId) {
+        const walletRes = await fetch(`${BACKEND_URL}/api/wallet/${activeUserId}`).catch(() => null);
+        if (walletRes && walletRes.ok) {
+          const walletData = await walletRes.json().catch(() => ({}));
+          const currentBalance = typeof walletData.balance === 'number' ? walletData.balance : (user?.balance || 0);
+          const updated = {
+            ...(currentUser || user || {}),
+            balance: currentBalance,
+            first_reading_free_used: walletData.first_reading_free_used ?? (user?.first_reading_free_used || false)
+          } as User;
+          setUser(updated);
+          const { token: curTok } = await getAuthData();
+          await saveAuthData(curTok || token || '', updated);
+        }
       }
     } catch (error) {
       console.error('Error refreshing user:', error);

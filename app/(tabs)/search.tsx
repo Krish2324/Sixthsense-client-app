@@ -94,7 +94,7 @@ export default function ChatHistoryScreen() {
     <TouchableOpacity
       style={[styles.sessionCard, { backgroundColor: colors.backgroundCard }]}
       onPress={() => router.push({
-        pathname: '/chat-history/[id]',
+        pathname: '/chat-history/[id]' as any,
         params: { id: item.id, psychicName: item.psychic_name || 'Advisor' }
       })}
       activeOpacity={0.7}

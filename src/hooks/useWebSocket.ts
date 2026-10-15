@@ -20,7 +20,7 @@ export function useWebSocket(userId: string | null, options: UseWebSocketOptions
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<any>(null);
   const reconnectAttemptsRef = useRef(0);
 
   const connect = useCallback(() => {

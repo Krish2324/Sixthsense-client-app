@@ -128,7 +128,7 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList>(null);
   const { colors } = useTheme();
   const wsRef = useRef<WebSocket | null>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<any>(null);
   // CLI-059: WS reconnection guard
   const isWsConnectedRef = useRef(false);
   const lastTypingEmitRef = useRef(0); // CLI-060: debounce

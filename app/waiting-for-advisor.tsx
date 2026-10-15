@@ -204,9 +204,9 @@ export default function WaitingForAdvisorScreen() {
   const handleCancel = async () => {
     if (requestId) {
       try {
-        await apiClient.delete(`/api/chat/request/${requestId}`);
-      } catch (e) {
-        console.error('Failed to cancel request on backend:', e);
+        await apiClient.delete(`/api/chat/request/${requestId}`).catch(() => null);
+      } catch {
+        // Quiet fallback
       }
     }
     wsRef.current?.close();

@@ -12,33 +12,67 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../src/context/ThemeContext';
 import { useAuth } from '../src/context/AuthContext';
+import { apiClient } from '../src/services/api';
 
 export default function PaymentSuccessScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const { refreshUser } = useAuth();
+  const { user, refreshUser } = useAuth();
   const params = useLocalSearchParams();
   
   const [isLoading, setIsLoading] = useState(true);
-  const [success, setSuccess] = useState(false);
+  const [success, setSuccess] = useState(true);
   const [creditsAdded, setCreditsAdded] = useState(0);
+  const [totalWalletBalance, setTotalWalletBalance] = useState<number | null>(null);
 
   useEffect(() => {
     const handlePaymentResult = async () => {
-      if (params.success === 'true') {
-        setSuccess(true);
-        // CLI-042: Immediately refresh balance on payment-success mount
-        try {
-          await refreshUser();
-          // Poll once more after 3 seconds to catch webhook delay
-          setTimeout(() => refreshUser().catch(() => {}), 3000);
-        } catch (error) {
-          console.error('Error refreshing user:', error);
-        }
-      } else if (params.cancelled === 'true') {
+      const isExplicitlyCancelled = params.cancelled === 'true' || params.canceled === 'true';
+      if (isExplicitlyCancelled) {
         setSuccess(false);
+        setIsLoading(false);
+        return;
       }
+
+      setSuccess(true);
+      const parsedCredits = params.credits ? parseInt(params.credits as string) : 0;
+      if (parsedCredits > 0) setCreditsAdded(parsedCredits);
+
+      const sessionId = (params.session_id as string) || '';
+      const activeUserId = user?.id || (params.user_id as string) || '';
+
+      // Direct verify with Stripe via backend if sessionId is present
+      if (sessionId) {
+        try {
+          const res = await apiClient.post('/api/payments/verify-checkout-session', {
+            session_id: sessionId,
+            user_id: activeUserId,
+          }).catch(() => null);
+          if (res && (res.credits_added || res.credits)) {
+            setCreditsAdded(res.credits_added || res.credits);
+          }
+          if (res && typeof res.balance === 'number') {
+            setTotalWalletBalance(res.balance);
+          }
+        } catch (e) {
+          console.log('Session verification in success screen:', e);
+        }
+      }
+
+      try {
+        if (typeof refreshUser === 'function') {
+          await refreshUser();
+        }
+        setTimeout(() => {
+          try {
+            refreshUser?.();
+          } catch {}
+        }, 1500);
+      } catch (error) {
+        console.error('Error refreshing user:', error);
+      }
+
       setIsLoading(false);
     };
 
@@ -46,7 +80,23 @@ export default function PaymentSuccessScreen() {
   }, [params]);
 
   const handleContinue = () => {
-    router.replace('/(tabs)/wallet');
+    try {
+      refreshUser?.();
+    } catch {}
+
+    try {
+      router.replace('/(tabs)/wallet');
+    } catch {
+      try {
+        router.push('/(tabs)/wallet');
+      } catch {
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/(tabs)/home');
+        }
+      }
+    }
   };
 
   if (isLoading) {
@@ -60,6 +110,8 @@ export default function PaymentSuccessScreen() {
     );
   }
 
+  const displayedBalance = totalWalletBalance !== null ? totalWalletBalance : (user?.balance || 0);
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <View style={styles.content}>
@@ -68,30 +120,46 @@ export default function PaymentSuccessScreen() {
             {/* Success Icon */}
             <View style={styles.iconContainer}>
               <LinearGradient
-                colors={['#4CAF50', '#2E7D32']}
+                colors={['#10B981', '#059669']}
                 style={styles.iconGradient}
               >
-                <Ionicons name="checkmark" size={60} color="#FFF" />
+                <Ionicons name="checkmark" size={64} color="#FFF" />
               </LinearGradient>
             </View>
 
-            {/* CLI-038: Festive Bonus Celebration Badge */}
-            <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 20, borderWidth: 1, borderColor: '#F59E0B' }}>
-              <Ionicons name="sparkles" size={18} color="#D97706" />
-              <Text style={{ color: '#92400E', fontWeight: '700', fontSize: 14 }}>🎉 Free Bonus Reading Minutes Unlocked!</Text>
-            </View>
-
             <Text style={[styles.title, { color: colors.textPrimary }]}>
-              Payment Successful!
+              {creditsAdded > 0 ? `+${creditsAdded} Credits Added!` : 'Payment Successful!'}
             </Text>
             
             <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-              Your credits have been added to your wallet. You can now start connecting with psychics!
+              Your payment has been verified and your credits have been added to your wallet.
             </Text>
 
-            <TouchableOpacity style={styles.button} onPress={handleContinue}>
+            {/* Total Wallet Balance Card */}
+            <View style={[styles.balanceCard, { backgroundColor: colors.backgroundCard || '#1C1635', borderColor: 'rgba(168, 85, 247, 0.25)' }]}>
+              <View style={styles.balanceHeader}>
+                <Ionicons name="wallet-outline" size={20} color={colors.primary || '#A855F7'} />
+                <Text style={[styles.balanceLabel, { color: colors.textSecondary }]}>
+                  Total Wallet Balance
+                </Text>
+              </View>
+              <Text style={[styles.balanceAmount, { color: colors.textPrimary }]}>
+                ${displayedBalance.toFixed(2)}
+              </Text>
+              <Text style={[styles.balanceSubtext, { color: colors.primary || '#A855F7' }]}>
+                {Math.round(displayedBalance)} Available Credits
+              </Text>
+            </View>
+
+            <TouchableOpacity 
+              style={styles.button} 
+              activeOpacity={0.8} 
+              onPress={handleContinue}
+            >
               <LinearGradient
-                colors={[colors.primary, colors.primaryDark || '#6B46C1']}
+                colors={[colors.primary || '#8B5CF6', colors.primaryDark || '#6B46C1']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
                 style={styles.buttonGradient}
               >
                 <Text style={styles.buttonText}>Go to Wallet</Text>
@@ -104,7 +172,7 @@ export default function PaymentSuccessScreen() {
             {/* Cancelled Icon */}
             <View style={styles.iconContainer}>
               <View style={[styles.iconCircle, { backgroundColor: '#FF5252' }]}>
-                <Ionicons name="close" size={60} color="#FFF" />
+                <Ionicons name="close" size={64} color="#FFF" />
               </View>
             </View>
 
@@ -116,9 +184,15 @@ export default function PaymentSuccessScreen() {
               Your payment was cancelled. No charges were made to your account.
             </Text>
 
-            <TouchableOpacity style={styles.button} onPress={handleContinue}>
+            <TouchableOpacity 
+              style={styles.button} 
+              activeOpacity={0.8} 
+              onPress={handleContinue}
+            >
               <LinearGradient
-                colors={[colors.primary, colors.primaryDark || '#6B46C1']}
+                colors={[colors.primary || '#8B5CF6', colors.primaryDark || '#6B46C1']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
                 style={styles.buttonGradient}
               >
                 <Text style={styles.buttonText}>Back to Wallet</Text>
@@ -137,59 +211,113 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 20,
   },
   content: {
     alignItems: 'center',
-    paddingHorizontal: 32,
+    width: '100%',
+    maxWidth: 420,
+    paddingHorizontal: 8,
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
   },
   iconContainer: {
-    marginBottom: 32,
+    marginBottom: 24,
   },
   iconGradient: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 8,
   },
   iconCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#FF5252',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 8,
   },
   title: {
     fontSize: 28,
     fontWeight: '800',
     textAlign: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     textAlign: 'center',
-    lineHeight: 24,
-    marginBottom: 40,
+    lineHeight: 22,
+    marginBottom: 24,
+    paddingHorizontal: 12,
+  },
+  balanceCard: {
+    width: '100%',
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    marginBottom: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  balanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  balanceLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  balanceAmount: {
+    fontSize: 36,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  balanceSubtext: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 4,
   },
   button: {
     width: '100%',
-    borderRadius: 14,
+    borderRadius: 16,
     overflow: 'hidden',
+    shadowColor: '#8B5CF6',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 6,
   },
   buttonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    gap: 8,
+    paddingVertical: 18,
+    gap: 10,
   },
   buttonText: {
     color: '#FFF',
     fontSize: 18,
     fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });

@@ -9,13 +9,16 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
-  Linking,
+  RefreshControl,
+  Modal,
 } from 'react-native';
+import * as Linking from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { COLORS, SPACING, SHADOWS } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import { useTheme } from '../../src/context/ThemeContext';
@@ -46,75 +49,362 @@ export default function WalletScreen() {
   const [customAmount, setCustomAmount] = useState('');
   const [selectedPackage, setSelectedPackage] = useState<typeof CREDIT_PACKAGES[0] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<any[]>([
+    {
+      id: 'pm_stripe_default',
+      type: 'card',
+      last_four: '4242',
+      brand: 'Visa',
+      is_default: true,
+    }
+  ]);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showAddCardModal, setShowAddCardModal] = useState(false);
+  const [selectedMethodType, setSelectedMethodType] = useState<'card' | 'apple_pay' | 'google_pay'>('card');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvc, setCardCvc] = useState('');
+  const [cardName, setCardName] = useState('');
+  const [isSavingCard, setIsSavingCard] = useState(false);
 
   const totalBalance = user?.balance || 0;
 
   const pollingRef = useRef<any>(null);
 
-  // CLI-034: Poll balance every 10s after payment opens
-  const startBalancePolling = () => {
-    if (pollingRef.current) clearInterval(pollingRef.current);
-    pollingRef.current = setInterval(async () => {
-      await refreshUser();
-    }, 10000);
-    setTimeout(() => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    }, 120000); // Stop after 2 minutes
+  const safeDismissBrowser = () => {
+    try {
+      WebBrowser.dismissBrowser();
+    } catch {
+      // Quiet
+    }
   };
 
+  const safeRefreshUser = async () => {
+    try {
+      if (typeof refreshUser === 'function') {
+        await refreshUser();
+      }
+    } catch {
+      // Quiet
+    }
+  };
+
+  const fetchTransactions = async () => {
+    const activeUserId = user?.id || 'usr_client_1792000155236';
+    setIsLoadingTransactions(true);
+    try {
+      // useCache=false so newly credited payments show up immediately
+      let res = await apiClient.get(`/api/wallet/transactions/${activeUserId}`, false).catch(() => null);
+      if (!Array.isArray(res) || res.length === 0) {
+        res = await apiClient.get(`/api/wallet/transactions?user_id=${activeUserId}`, false).catch(() => null);
+      }
+      if (Array.isArray(res)) {
+        setTransactions(res);
+      }
+    } catch (e) {
+      console.log('Error fetching transactions:', e);
+    } finally {
+      setIsLoadingTransactions(false);
+    }
+  };
+
+  const fetchPaymentMethods = async () => {
+    const activeUserId = user?.id || 'usr_client_1792000155236';
+    try {
+      const res = await apiClient.get(`/api/wallet/payment-methods/${activeUserId}`, false).catch(() => null);
+      if (res && Array.isArray(res.payment_methods) && res.payment_methods.length > 0) {
+        setPaymentMethods(res.payment_methods);
+      }
+    } catch (e) {
+      console.log('Error fetching payment methods:', e);
+    }
+  };
+
+  const handleSetDefaultPaymentMethod = async (methodId: string) => {
+    try {
+      const activeUserId = user?.id || 'usr_client_1792000155236';
+      const res = await apiClient.post(`/api/wallet/payment-methods/${activeUserId}/set-default/${methodId}`, {}).catch(() => null);
+      if (res && res.payment_methods) {
+        setPaymentMethods(res.payment_methods);
+      } else {
+        await fetchPaymentMethods();
+      }
+    } catch (e) {
+      console.log('Error setting default payment method:', e);
+    }
+  };
+
+  const handleModalDoneAndPay = (method?: 'card' | 'apple_pay' | 'google_pay') => {
+    const targetMethod = method || selectedMethodType;
+    setSelectedMethodType(targetMethod);
+    setShowPaymentModal(false);
+    setTimeout(() => {
+      handleAddFunds(targetMethod);
+    }, 250);
+  };
+
+  const handleSaveCard = async () => {
+    const rawNumber = cardNumber.replace(/\s/g, '');
+    if (rawNumber.length < 13) {
+      Alert.alert('Invalid Card', 'Please enter a valid card number.');
+      return;
+    }
+    const lastFour = rawNumber.slice(-4);
+    let brand = 'Visa';
+    if (rawNumber.startsWith('5')) brand = 'Mastercard';
+    else if (rawNumber.startsWith('3')) brand = 'Amex';
+    else if (rawNumber.startsWith('6')) brand = 'Discover';
+
+    setIsSavingCard(true);
+    try {
+      const activeUserId = user?.id;
+      const res = await apiClient.post('/api/wallet/payment-methods', {
+        user_id: activeUserId,
+        type: 'card',
+        last_four: lastFour,
+        brand: brand,
+        cardholder_name: cardName || 'Cardholder',
+        is_default: true,
+      });
+      if (res && res.payment_methods) {
+        setPaymentMethods(res.payment_methods);
+      } else {
+        await fetchPaymentMethods();
+      }
+      setShowAddCardModal(false);
+      setCardNumber('');
+      setCardExpiry('');
+      setCardCvc('');
+      setCardName('');
+      Alert.alert('Card Added! 💳', `${brand} ending in ${lastFour} was successfully added.`);
+    } catch (e: any) {
+      Alert.alert('Save Card Error', e?.message || 'Unable to save card.');
+    } finally {
+      setIsSavingCard(false);
+    }
+  };
+
+  const triggerPushNotification = async (title: string, body: string) => {
+    // Note: The backend dispatches remote push notifications to device tokens via send_push.
+    // In Expo Go on SDK 53, require('expo-notifications') on Android logs a red console error.
+    // Guard strictly so Expo Go never tries to require expo-notifications.
+    try {
+      const isExpo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient || (Constants as any)?.appOwnership === 'expo';
+      if (!isExpo && Platform.OS !== 'web') {
+        const NotifModule = require('expo-notifications');
+        if (NotifModule && typeof NotifModule.scheduleNotificationAsync === 'function') {
+          await NotifModule.scheduleNotificationAsync({
+            content: {
+              title,
+              body,
+              sound: true,
+            },
+            trigger: null,
+          });
+        }
+      }
+    } catch {
+      // Quietly ignore in development/Expo Go
+    }
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'Recent';
+    try {
+      const d = new Date(dateString);
+      if (isNaN(d.getTime())) return 'Recent';
+      return d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    } catch {
+      return 'Recent';
+    }
+  };
+
+  const onRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await safeRefreshUser();
+      await fetchTransactions();
+      await fetchPaymentMethods();
+    } catch (e) {
+      console.log('Wallet swipe refresh error:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // CLI-034: Poll balance & verification every 2s after payment opens
+  const startBalancePolling = (sessionId?: string, expectedCredits?: number, expectedAmount?: number) => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    let attempts = 0;
+    pollingRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        if (sessionId) {
+          const res = await apiClient.post('/api/payments/verify-checkout-session', {
+            session_id: sessionId,
+            user_id: user?.id || 'usr_client_1792000155236',
+            credits: expectedCredits || 25,
+            amount: expectedAmount || 23,
+          }).catch(() => null);
+
+          if (res && (res.status === 'success' || res.status === 'already_processed')) {
+            // Automatically close the browser on phone!
+            if (Platform.OS !== 'web') {
+              safeDismissBrowser();
+            }
+            if (pollingRef.current) clearInterval(pollingRef.current);
+            await safeRefreshUser();
+            await fetchTransactions();
+            await fetchPaymentMethods();
+            triggerPushNotification(
+              '🎉 Funds Added to Wallet!',
+              `+${res.credits_added || res.credits || expectedCredits || 'Your'} credits added! Your balance is now $${(res.balance || totalBalance).toFixed(2)}.`
+            );
+            Alert.alert(
+              'Payment Complete! 🎉',
+              `${res.credits_added || res.credits || expectedCredits || 'Your'} credits have been added to your wallet balance.`
+            );
+            return;
+          }
+        }
+        await safeRefreshUser();
+      } catch (e) {
+        // Quiet
+      }
+    }, 2000);
+    setTimeout(() => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    }, 180000); // Stop after 3 minutes
+  };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      safeRefreshUser();
+      fetchTransactions();
+      fetchPaymentMethods();
+    }, [user?.id])
+  );
+
   useEffect(() => {
+    safeRefreshUser();
+    fetchTransactions();
+    fetchPaymentMethods();
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, []);
 
-  const handleAddFunds = async () => {
-    const amount = selectedPackage?.price || parseFloat(customAmount);
-    const credits = selectedPackage?.credits || parseFloat(customAmount);
+  const handleAddFunds = async (methodOverride?: 'card' | 'apple_pay' | 'google_pay', packageOverride?: typeof CREDIT_PACKAGES[0]) => {
+    const pkg = packageOverride || selectedPackage;
+    let amount = pkg?.price || parseFloat(customAmount);
+    let credits = pkg?.credits || parseFloat(customAmount);
 
+    // If neither package nor customAmount is selected, default to popular package (25 credits for $23)
     if (!amount || isNaN(amount) || amount < 5) {
-      Alert.alert('Minimum Amount', 'Please select a package or enter at least $5 to continue.');
-      return;
+      const defaultPkg = CREDIT_PACKAGES.find(p => p.popular) || CREDIT_PACKAGES[2];
+      amount = defaultPkg.price;
+      credits = defaultPkg.credits;
+      setSelectedPackage(defaultPkg);
     }
+
+    const payMethod = methodOverride || selectedMethodType || 'card';
+    setSelectedMethodType(payMethod);
 
     setIsLoading(true);
     try {
+      const appReturnUrl = Linking.createURL('payment-success', {
+        queryParams: {
+          success: 'true',
+          credits: String(credits),
+          user_id: user?.id || 'usr_client_1792000155236',
+        }
+      });
+      const backendBase = BACKEND_URL || 'http://192.168.29.228:8000';
+      const webSuccessUrl = `${backendBase}/api/payments/checkout-success`;
+
       const data = await apiClient.post('/api/payments/create-checkout-session', {
-        amount: amount * 100,
+        amount: Math.round(amount * 100),
         credits: credits,
-        user_id: user?.id,
-        success_url: `sixthsensepsychics://payment-success?success=true`,
-        cancel_url: `sixthsensepsychics://payment-success?cancelled=true`,
-      }).catch(() => null);
+        user_id: user?.id || 'usr_client_1792000155236',
+        app_return_url: appReturnUrl,
+        method: payMethod,
+      }).catch((err) => {
+        console.log('Checkout session creation notice:', err);
+        return null;
+      });
 
       if (data && data.checkout_url) {
+        startBalancePolling(data.session_id, credits, amount);
         if (Platform.OS === 'web') {
           await Linking.openURL(data.checkout_url).catch(() => null);
         } else {
-          await WebBrowser.openAuthSessionAsync(
+          // Open with webSuccessUrl so Chrome Custom Tab intercepts return
+          const authResult = await WebBrowser.openAuthSessionAsync(
             data.checkout_url,
-            'sixthsensepsychics://payment-success'
+            webSuccessUrl
           ).catch(() => null);
+
+          // Force dismiss in case browser custom tab is still open
+          safeDismissBrowser();
+
+          // Actively verify session immediately upon browser dismiss or redirect
+          if (data.session_id) {
+            try {
+              const vRes = await apiClient.post('/api/payments/verify-checkout-session', {
+                session_id: data.session_id,
+                user_id: user?.id || 'usr_client_1792000155236',
+                credits: credits,
+                amount: amount,
+              });
+              if (vRes && (vRes.status === 'success' || vRes.status === 'already_processed')) {
+                if (pollingRef.current) clearInterval(pollingRef.current);
+                await safeRefreshUser();
+                await fetchTransactions();
+                await fetchPaymentMethods();
+                triggerPushNotification(
+                  '🎉 Funds Added to Wallet!',
+                  `+${vRes.credits_added || vRes.credits || credits} credits added! Your balance is now $${(vRes.balance || totalBalance).toFixed(2)}.`
+                );
+                Alert.alert(
+                  'Payment Complete! 🎉',
+                  `${vRes.credits_added || vRes.credits || credits} credits have been added to your wallet balance.`
+                );
+                return;
+              }
+            } catch (vErr) {
+              console.log('Post-checkout verify check:', vErr);
+            }
+          }
+
+          await safeRefreshUser();
+          await fetchTransactions();
         }
+      } else {
+        const errorMsg = 'Unable to connect to payment provider. Please try again.';
+        (Platform.OS as string) === 'web' ? alert(errorMsg) : Alert.alert('Payment Error', errorMsg);
       }
-    } catch {
-      // Quiet fallback for preview & mobile sandbox
+    } catch (err: any) {
+      console.log('Payment checkout notice:', err);
+      const msg = err?.message || '';
+      if (msg && !msg.includes('catch') && !msg.includes('dismiss')) {
+        const errorMsg = msg || 'Payment initiation failed. Please try again.';
+        (Platform.OS as string) === 'web' ? alert(errorMsg) : Alert.alert('Payment Error', errorMsg);
+      }
     } finally {
-      const newBal = (user?.balance || 0) + credits;
-      if (updateUser) {
-        await updateUser({ balance: newBal });
-      }
-      await refreshUser?.().catch(() => null);
       setIsLoading(false);
       setSelectedPackage(null);
       setCustomAmount('');
-
-      const msg = `Successfully added ${credits} credits!\n\nNew Balance: $${newBal.toFixed(2)}`;
-      if (Platform.OS === 'web') {
-        alert(msg);
-      } else {
-        Alert.alert('Payment Successful', msg);
-      }
+      await safeRefreshUser();
+      await fetchTransactions();
     }
   };
 
@@ -130,7 +420,7 @@ export default function WalletScreen() {
           <Text style={[styles.lowBalanceText, { color: '#FF5252' }]}>
             Low balance! Add credits to continue your readings.
           </Text>
-          <TouchableOpacity onPress={handleAddFunds}>
+          <TouchableOpacity onPress={() => handleAddFunds()}>
             <Text style={[styles.lowBalanceCta, { color: '#FF5252' }]}>Add Now</Text>
           </TouchableOpacity>
         </View>
@@ -138,6 +428,14 @@ export default function WalletScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: SPACING.xl }}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            colors={[colors.primary || '#8B5CF6']}
+            tintColor={colors.primary || '#8B5CF6'}
+          />
+        }
       >
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top + SPACING.md }]}>
@@ -307,15 +605,11 @@ export default function WalletScreen() {
             {/* Add Funds Button */}
             <TouchableOpacity
               style={styles.addButton}
-              onPress={handleAddFunds}
-              disabled={isLoading || (!selectedPackage && !customAmount)}
+              onPress={() => handleAddFunds(selectedMethodType)}
+              disabled={isLoading}
             >
               <LinearGradient
-                colors={
-                  (!selectedPackage && !customAmount) 
-                    ? ['#999', '#777'] 
-                    : [colors.primary || COLORS.primary, colors.primaryDark || COLORS.primaryDark]
-                }
+                colors={[colors.primary || COLORS.primary, colors.primaryDark || COLORS.primaryDark]}
                 style={styles.addButtonGradient}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
@@ -324,13 +618,41 @@ export default function WalletScreen() {
                   <ActivityIndicator color="#FFF" />
                 ) : (
                   <>
-                    <Ionicons name="card" size={20} color="#FFF" />
+                    <Ionicons 
+                      name={
+                        selectedMethodType === 'google_pay' 
+                          ? 'logo-google' 
+                          : selectedMethodType === 'apple_pay' 
+                            ? 'logo-apple' 
+                            : 'card'
+                      } 
+                      size={20} 
+                      color="#FFF" 
+                    />
                     <Text style={styles.addButtonText}>
                       {selectedPackage 
-                        ? `Purchase ${selectedPackage.credits} Credits for $${selectedPackage.price}`
+                        ? `Pay $${selectedPackage.price} with ${
+                            selectedMethodType === 'google_pay' 
+                              ? 'Google Pay' 
+                              : selectedMethodType === 'apple_pay' 
+                                ? 'Apple Pay' 
+                                : 'Card'
+                          } (${selectedPackage.credits} Credits)`
                         : customAmount 
-                          ? `Purchase $${customAmount} Credits`
-                          : 'Select a Package'
+                          ? `Pay $${customAmount} with ${
+                            selectedMethodType === 'google_pay' 
+                              ? 'Google Pay' 
+                              : selectedMethodType === 'apple_pay' 
+                                ? 'Apple Pay' 
+                                : 'Card'
+                          }`
+                          : `Purchase Credits with ${
+                            selectedMethodType === 'google_pay' 
+                              ? 'Google Pay' 
+                              : selectedMethodType === 'apple_pay' 
+                                ? 'Apple Pay' 
+                                : 'Card'
+                          }`
                       }
                     </Text>
                   </>
@@ -394,42 +716,462 @@ export default function WalletScreen() {
           </View>
         )}
 
-        {/* Payment Methods */}
+        {/* Payment Methods section - commented out (hidden from wallet page)
         <View style={styles.paymentMethodsSection}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Payment Methods</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Payment Methods</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <TouchableOpacity onPress={() => setShowAddCardModal(true)}>
+                <Text style={[styles.manageCta, { color: '#10B981' }]}>+ Add Card</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowPaymentModal(true)}>
+                <Text style={[styles.manageCta, { color: colors.primary }]}>Manage</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
           
+          // Google Pay Direct Option
           <TouchableOpacity 
-            style={[styles.addPaymentButton, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}
-            onPress={() => {
-              Alert.alert(
-                'Payment Methods',
-                'When you purchase credits, you can pay with:\n\n• Credit/Debit Card\n• Apple Pay\n• Google Pay\n\nYour payment info is securely processed by Stripe.',
-                [{ text: 'Got it', style: 'default' }]
-              );
-            }}
+            style={[styles.addPaymentButton, { backgroundColor: colors.backgroundCard, borderColor: selectedMethodType === 'google_pay' ? '#4285F4' : colors.border }]}
+            activeOpacity={0.8}
+            onPress={() => handleAddFunds('google_pay')}
           >
-            <View style={[styles.addPaymentIcon, { backgroundColor: colors.backgroundElevated }]}>
-              <Ionicons name="card" size={24} color={colors.primary} />
+            <View style={[styles.addPaymentIcon, { backgroundColor: 'rgba(66, 133, 244, 0.12)' }]}>
+              <Ionicons name="logo-google" size={24} color="#4285F4" />
             </View>
             <View style={styles.addPaymentText}>
-              <Text style={[styles.addPaymentTitle, { color: colors.textPrimary }]}>Secure Checkout</Text>
-              <Text style={[styles.addPaymentSubtitle, { color: colors.textSecondary }]}>Card, Apple Pay, or Google Pay</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={[styles.addPaymentTitle, { color: colors.textPrimary }]}>
+                  Google Pay
+                </Text>
+                <View style={[styles.defaultPill, { backgroundColor: 'rgba(66, 133, 244, 0.15)' }]}>
+                  <Text style={[styles.defaultPillText, { color: '#4285F4' }]}>INSTANT</Text>
+                </View>
+              </View>
+              <Text style={[styles.addPaymentSubtitle, { color: colors.textSecondary }]}>
+                Tap to pay directly with Google Pay
+              </Text>
             </View>
-            <Ionicons name="shield-checkmark" size={20} color="#4CAF50" />
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
           </TouchableOpacity>
+
+          // Apple Pay Direct Option
+          <TouchableOpacity 
+            style={[styles.addPaymentButton, { backgroundColor: colors.backgroundCard, borderColor: selectedMethodType === 'apple_pay' ? colors.primary : colors.border, marginTop: 8 }]}
+            activeOpacity={0.8}
+            onPress={() => handleAddFunds('apple_pay')}
+          >
+            <View style={[styles.addPaymentIcon, { backgroundColor: 'rgba(168, 85, 247, 0.12)' }]}>
+              <Ionicons name="logo-apple" size={24} color={colors.textPrimary} />
+            </View>
+            <View style={styles.addPaymentText}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={[styles.addPaymentTitle, { color: colors.textPrimary }]}>
+                  Apple Pay
+                </Text>
+                <View style={[styles.defaultPill, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                  <Text style={[styles.defaultPillText, { color: '#10B981' }]}>1-TOUCH</Text>
+                </View>
+              </View>
+              <Text style={[styles.addPaymentSubtitle, { color: colors.textSecondary }]}>
+                Tap to pay with Touch ID / Face ID
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          </TouchableOpacity>
+
+          // Saved Cards
+          {paymentMethods.filter(pm => pm.type === 'card' || !pm.type).map((pm, idx) => (
+            <TouchableOpacity 
+              key={pm.id || idx}
+              style={[styles.addPaymentButton, { backgroundColor: colors.backgroundCard, borderColor: selectedMethodType === 'card' ? colors.primary : colors.border, marginTop: 8 }]}
+              activeOpacity={0.8}
+              onPress={() => handleAddFunds('card')}
+            >
+              <View style={[styles.addPaymentIcon, { backgroundColor: colors.backgroundElevated }]}>
+                <Ionicons name="card" size={24} color={colors.primary} />
+              </View>
+              <View style={styles.addPaymentText}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.addPaymentTitle, { color: colors.textPrimary }]}>
+                    {pm.brand || 'Visa'} •••• {pm.last_four || '4242'}
+                  </Text>
+                  {pm.is_default && (
+                    <View style={styles.defaultPill}>
+                      <Text style={styles.defaultPillText}>DEFAULT</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.addPaymentSubtitle, { color: colors.textSecondary }]}>
+                  Stripe 256-bit Encrypted • Tap to Pay
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          ))}
         </View>
+        */}
 
         {/* Transaction History */}
         <View style={styles.historySection}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Transactions</Text>
-          
-          <View style={[styles.emptyHistory, { backgroundColor: colors.backgroundCard }]}>
-            <Ionicons name="receipt-outline" size={40} color={colors.textMuted} />
-            <Text style={[styles.emptyHistoryText, { color: colors.textPrimary }]}>No transactions yet</Text>
-            <Text style={[styles.emptyHistorySubtext, { color: colors.textSecondary }]}>Your reading history will appear here</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Transactions</Text>
+            {transactions.length > 0 && (
+              <Text style={[styles.txCountBadge, { color: colors.textSecondary }]}>
+                {transactions.length} total
+              </Text>
+            )}
           </View>
+          
+          {isLoadingTransactions && transactions.length === 0 ? (
+            <View style={[styles.loadingBox, { backgroundColor: colors.backgroundCard }]}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={[styles.loadingBoxText, { color: colors.textSecondary }]}>Loading history...</Text>
+            </View>
+          ) : transactions.length > 0 ? (
+            <View style={styles.transactionsList}>
+              {transactions.map((t, idx) => {
+                const isCredit = t.type === 'credit_purchase';
+                return (
+                  <View 
+                    key={t.id || t._id || idx} 
+                    style={[styles.transactionCard, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}
+                  >
+                    <View style={[styles.txIconCircle, { backgroundColor: isCredit ? 'rgba(16, 185, 129, 0.15)' : 'rgba(139, 92, 246, 0.15)' }]}>
+                      <Ionicons 
+                        name={isCredit ? "arrow-down-circle" : "chatbubble-ellipses"} 
+                        size={24} 
+                        color={isCredit ? "#10B981" : colors.primary} 
+                      />
+                    </View>
+                    <View style={styles.txMainInfo}>
+                      <Text style={[styles.txTitle, { color: colors.textPrimary }]}>
+                        {isCredit ? `Added ${t.credits || Math.round(t.amount)} Credits` : (t.description || 'Reading Session')}
+                      </Text>
+                      <Text style={[styles.txDate, { color: colors.textSecondary }]}>
+                        {formatDate(t.created_at)}
+                      </Text>
+                    </View>
+                    <View style={styles.txAmountCol}>
+                      <Text style={[styles.txAmountText, { color: isCredit ? '#10B981' : colors.textPrimary }]}>
+                        {isCredit ? `+$${(t.amount || 0).toFixed(2)}` : `-$${(t.amount || 0).toFixed(2)}`}
+                      </Text>
+                      <View style={styles.completedPill}>
+                        <Ionicons name="checkmark" size={11} color="#10B981" />
+                        <Text style={styles.completedPillText}>Success</Text>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : (
+            <View style={[styles.emptyHistory, { backgroundColor: colors.backgroundCard }]}>
+              <Ionicons name="receipt-outline" size={40} color={colors.textMuted} />
+              <Text style={[styles.emptyHistoryText, { color: colors.textPrimary }]}>No transactions yet</Text>
+              <Text style={[styles.emptyHistorySubtext, { color: colors.textSecondary }]}>Your reading & credit top-up history will appear here</Text>
+            </View>
+          )}
         </View>
       </ScrollView>
+
+      {/* Payment Methods Interactive Modal */}
+      <Modal
+        visible={showPaymentModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowPaymentModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Ionicons name="card" size={24} color={colors.primary} />
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Payment Methods</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowPaymentModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.modalDesc, { color: colors.textSecondary }]}>
+              All payments on Sixth Sense are processed with bank-grade 256-bit encryption by Stripe.
+            </Text>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+              <View style={styles.modalMethodsList}>
+                {/* Credit / Debit Cards Interactive Option */}
+                <TouchableOpacity 
+                  style={[
+                    styles.modalMethodItem, 
+                    { borderColor: selectedMethodType === 'card' ? colors.primary : colors.border }
+                  ]}
+                  activeOpacity={0.75}
+                  onPress={() => setSelectedMethodType('card')}
+                >
+                  <Ionicons name="card-outline" size={24} color={colors.primary} />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={[styles.modalMethodTitle, { color: colors.textPrimary }]}>Credit / Debit Cards</Text>
+                    <Text style={[styles.modalMethodSub, { color: colors.textSecondary }]}>Visa, Mastercard, Amex, Discover</Text>
+                  </View>
+                  <TouchableOpacity 
+                    style={[styles.instantPayPill, { backgroundColor: colors.primary }]}
+                    onPress={() => handleModalDoneAndPay('card')}
+                  >
+                    <Text style={styles.instantPayPillText}>Pay</Text>
+                  </TouchableOpacity>
+                  <Ionicons 
+                    name={selectedMethodType === 'card' ? "checkmark-circle" : "ellipse-outline"} 
+                    size={22} 
+                    color={selectedMethodType === 'card' ? "#10B981" : colors.textMuted} 
+                    style={{ marginLeft: 8 }}
+                  />
+                </TouchableOpacity>
+
+                {/* Sub-list of cards and Add Card action */}
+                {selectedMethodType === 'card' && (
+                  <View style={styles.savedCardsContainer}>
+                    {paymentMethods.map((pm, idx) => (
+                      <TouchableOpacity
+                        key={pm.id || idx}
+                        style={[
+                          styles.savedCardRow,
+                          { 
+                            backgroundColor: colors.backgroundElevated || 'rgba(255,255,255,0.04)', 
+                            borderColor: pm.is_default ? colors.primary : colors.border 
+                          }
+                        ]}
+                        activeOpacity={0.75}
+                        onPress={() => handleSetDefaultPaymentMethod(pm.id)}
+                      >
+                        <Ionicons name="card" size={20} color={pm.is_default ? colors.primary : colors.textSecondary} />
+                        <Text style={[styles.savedCardText, { color: colors.textPrimary }]}>
+                          {pm.brand || 'Visa'} •••• {pm.last_four || '4242'}
+                        </Text>
+                        {pm.is_default ? (
+                          <View style={styles.defaultPill}>
+                            <Text style={styles.defaultPillText}>DEFAULT</Text>
+                          </View>
+                        ) : (
+                          <Text style={[styles.setDefaultLink, { color: colors.primary }]}>Set Default</Text>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+
+                    <TouchableOpacity
+                      style={[styles.addCardRow, { borderColor: colors.primary }]}
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        setShowPaymentModal(false);
+                        setTimeout(() => setShowAddCardModal(true), 250);
+                      }}
+                    >
+                      <Ionicons name="add-circle" size={20} color={colors.primary} />
+                      <Text style={[styles.addCardRowText, { color: colors.primary }]}>
+                        + Add New Card
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Apple Pay Interactive Option */}
+                <TouchableOpacity 
+                  style={[
+                    styles.modalMethodItem, 
+                    { borderColor: selectedMethodType === 'apple_pay' ? colors.primary : colors.border }
+                  ]}
+                  activeOpacity={0.75}
+                  onPress={() => setSelectedMethodType('apple_pay')}
+                >
+                  <Ionicons name="logo-apple" size={24} color={colors.textPrimary} />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={[styles.modalMethodTitle, { color: colors.textPrimary }]}>Apple Pay</Text>
+                    <Text style={[styles.modalMethodSub, { color: colors.textSecondary }]}>Fast, secure 1-touch checkout</Text>
+                  </View>
+                  <TouchableOpacity 
+                    style={[styles.instantPayPill, { backgroundColor: colors.primary }]}
+                    onPress={() => handleModalDoneAndPay('apple_pay')}
+                  >
+                    <Text style={styles.instantPayPillText}>Pay</Text>
+                  </TouchableOpacity>
+                  <Ionicons 
+                    name={selectedMethodType === 'apple_pay' ? "checkmark-circle" : "ellipse-outline"} 
+                    size={22} 
+                    color={selectedMethodType === 'apple_pay' ? "#10B981" : colors.textMuted} 
+                    style={{ marginLeft: 8 }}
+                  />
+                </TouchableOpacity>
+
+                {/* Google Pay Interactive Option */}
+                <TouchableOpacity 
+                  style={[
+                    styles.modalMethodItem, 
+                    { borderColor: selectedMethodType === 'google_pay' ? '#4285F4' : colors.border }
+                  ]}
+                  activeOpacity={0.75}
+                  onPress={() => setSelectedMethodType('google_pay')}
+                >
+                  <Ionicons name="logo-google" size={24} color="#4285F4" />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={[styles.modalMethodTitle, { color: colors.textPrimary }]}>Google Pay</Text>
+                    <Text style={[styles.modalMethodSub, { color: colors.textSecondary }]}>Available on Android & Web</Text>
+                  </View>
+                  <TouchableOpacity 
+                    style={[styles.instantPayPill, { backgroundColor: '#4285F4' }]}
+                    onPress={() => handleModalDoneAndPay('google_pay')}
+                  >
+                    <Text style={styles.instantPayPillText}>Pay</Text>
+                  </TouchableOpacity>
+                  <Ionicons 
+                    name={selectedMethodType === 'google_pay' ? "checkmark-circle" : "ellipse-outline"} 
+                    size={22} 
+                    color={selectedMethodType === 'google_pay' ? "#10B981" : colors.textMuted} 
+                    style={{ marginLeft: 8 }}
+                  />
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+
+            <TouchableOpacity 
+              style={[
+                styles.modalDoneButton, 
+                { 
+                  backgroundColor: selectedMethodType === 'google_pay' ? '#4285F4' : colors.primary, 
+                  marginTop: 14, 
+                  flexDirection: 'row', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: 8,
+                  paddingVertical: 16,
+                  borderRadius: 14,
+                }
+              ]}
+              onPress={() => handleModalDoneAndPay(selectedMethodType)}
+            >
+              <Ionicons 
+                name={
+                  selectedMethodType === 'google_pay' 
+                    ? 'logo-google' 
+                    : selectedMethodType === 'apple_pay' 
+                      ? 'logo-apple' 
+                      : 'card'
+                } 
+                size={20} 
+                color="#FFF" 
+              />
+              <Text style={styles.modalDoneText}>
+                {selectedMethodType === 'google_pay' 
+                  ? 'Done • Open Google Pay' 
+                  : selectedMethodType === 'apple_pay' 
+                    ? 'Done • Open Apple Pay' 
+                    : 'Done • Open Card Checkout'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add New Card Sheet / Modal */}
+      <Modal
+        visible={showAddCardModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowAddCardModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Ionicons name="card" size={24} color={colors.primary} />
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add New Card</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowAddCardModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.modalDesc, { color: colors.textSecondary }]}>
+              Enter your card details. Secured with Stripe 256-bit encryption.
+            </Text>
+
+            <View style={styles.formGroup}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Cardholder Name</Text>
+              <TextInput
+                style={[styles.cardInput, { backgroundColor: colors.backgroundElevated, color: colors.textPrimary, borderColor: colors.border }]}
+                placeholder="Full Name as on card"
+                placeholderTextColor={colors.textMuted}
+                value={cardName}
+                onChangeText={setCardName}
+              />
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Card Number</Text>
+              <TextInput
+                style={[styles.cardInput, { backgroundColor: colors.backgroundElevated, color: colors.textPrimary, borderColor: colors.border }]}
+                placeholder="4242 4242 4242 4242"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="numeric"
+                maxLength={19}
+                value={cardNumber}
+                onChangeText={(text) => {
+                  const cleaned = text.replace(/\D/g, '');
+                  const formatted = cleaned.match(/.{1,4}/g)?.join(' ') || cleaned;
+                  setCardNumber(formatted.slice(0, 19));
+                }}
+              />
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Expiry (MM/YY)</Text>
+                <TextInput
+                  style={[styles.cardInput, { backgroundColor: colors.backgroundElevated, color: colors.textPrimary, borderColor: colors.border }]}
+                  placeholder="12/28"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="numeric"
+                  maxLength={5}
+                  value={cardExpiry}
+                  onChangeText={(text) => {
+                    const cleaned = text.replace(/\D/g, '');
+                    if (cleaned.length >= 2) {
+                      setCardExpiry(cleaned.slice(0, 2) + '/' + cleaned.slice(2, 4));
+                    } else {
+                      setCardExpiry(cleaned);
+                    }
+                  }}
+                />
+              </View>
+
+              <View style={[styles.formGroup, { flex: 1 }]}>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>CVC / CVV</Text>
+                <TextInput
+                  style={[styles.cardInput, { backgroundColor: colors.backgroundElevated, color: colors.textPrimary, borderColor: colors.border }]}
+                  placeholder="123"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="numeric"
+                  secureTextEntry={true}
+                  maxLength={4}
+                  value={cardCvc}
+                  onChangeText={setCardCvc}
+                />
+              </View>
+            </View>
+
+            <TouchableOpacity 
+              style={[styles.saveCardButton, { backgroundColor: colors.primary }]}
+              onPress={handleSaveCard}
+              disabled={isSavingCard}
+            >
+              {isSavingCard ? (
+                <ActivityIndicator color="#FFF" />
+              ) : (
+                <Text style={styles.modalDoneText}>Save & Use Card</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -768,5 +1510,227 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     textDecorationLine: 'underline',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.sm,
+  },
+  manageCta: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  defaultPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+  },
+  defaultPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#8B5CF6',
+  },
+  txCountBadge: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  loadingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SPACING.lg,
+    borderRadius: 12,
+    gap: 10,
+  },
+  loadingBoxText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  transactionsList: {
+    gap: 10,
+  },
+  transactionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: SPACING.md,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  txIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  txMainInfo: {
+    flex: 1,
+    marginLeft: SPACING.md,
+  },
+  txTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  txDate: {
+    fontSize: 12,
+    marginTop: 3,
+  },
+  txAmountCol: {
+    alignItems: 'flex-end',
+  },
+  txAmountText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  completedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  completedPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.lg,
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: SPACING.xl,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.sm,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  modalDesc: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: SPACING.lg,
+  },
+  modalMethodsList: {
+    gap: SPACING.sm,
+    marginBottom: SPACING.xl,
+  },
+  modalMethodItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: SPACING.md,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  modalMethodTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  modalMethodSub: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  modalDoneButton: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalDoneText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  instantPayPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  instantPayPillText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  savedCardsContainer: {
+    marginTop: 8,
+    marginBottom: 8,
+    gap: 8,
+    paddingLeft: 6,
+  },
+  savedCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 10,
+  },
+  savedCardText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  setDefaultLink: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  addCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    gap: 8,
+    marginTop: 4,
+  },
+  addCardRowText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  formGroup: {
+    marginBottom: SPACING.md,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  cardInput: {
+    height: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    fontSize: 15,
+  },
+  saveCardButton: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
   },
 });

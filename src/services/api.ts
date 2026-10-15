@@ -1,7 +1,7 @@
 import { getSecureItem, clearAuthData } from './secureStorage';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
-const TIMEOUT_MS = 15000; // 15s timeout (CLI-022)
+const TIMEOUT_MS = 25000; // 25s resilient network timeout (CLI-022)
 const CACHE_TTL_MS = 30000; // 30s response cache (CLI-023)
 
 interface CacheEntry {
