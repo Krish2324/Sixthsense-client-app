@@ -18,8 +18,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
+import * as ImagePicker from 'expo-image-picker';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 
 export default function SubmitQuestionScreen() {
   const { psychicId, psychicName } = useLocalSearchParams();
@@ -30,6 +31,8 @@ export default function SubmitQuestionScreen() {
   // Form state
   const [questionText, setQuestionText] = useState('');
   const [deliveryType, setDeliveryType] = useState<'standard' | 'emergency'>('standard');
+  const [clientVideoUri, setClientVideoUri] = useState<string | null>(null);
+  const [clientVideoDuration, setClientVideoDuration] = useState<number | null>(null);
   const [isThirdParty, setIsThirdParty] = useState(false);
   const [thirdPartyName, setThirdPartyName] = useState('');
   const [thirdPartyBirthDate, setThirdPartyBirthDate] = useState('');
@@ -42,6 +45,80 @@ export default function SubmitQuestionScreen() {
   const balance = user?.balance || 0;
   const canAfford = balance >= price;
 
+  const handleRecordOrPickVideo = () => {
+    Alert.alert(
+      'Record Video Question',
+      'Record yourself asking your question for your advisor (max 2 minutes):',
+      [
+        {
+          text: '📹 Record with Camera',
+          onPress: recordVideoWithCamera,
+        },
+        {
+          text: '🖼️ Choose from Gallery',
+          onPress: pickVideoFromGallery,
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
+  };
+
+  const recordVideoWithCamera = async () => {
+    try {
+      const cameraPerm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!cameraPerm.granted) {
+        Alert.alert('Permission Required', 'Camera permission is required to record a video question.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: true,
+        quality: 0.8,
+        videoMaxDuration: 120,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        setClientVideoUri(asset.uri);
+        if (asset.duration) {
+          setClientVideoDuration(Math.round(asset.duration / 1000));
+        }
+      }
+    } catch (err: any) {
+      console.error('Camera record error:', err);
+      Alert.alert('Error', 'Could not open camera recorder');
+    }
+  };
+
+  const pickVideoFromGallery = async () => {
+    try {
+      const mediaPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!mediaPerm.granted) {
+        Alert.alert('Permission Required', 'Media library permission is required to choose a video.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        setClientVideoUri(asset.uri);
+        if (asset.duration) {
+          setClientVideoDuration(Math.round(asset.duration / 1000));
+        }
+      }
+    } catch (err: any) {
+      console.error('Gallery pick error:', err);
+      Alert.alert('Error', 'Could not select video from gallery');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!questionText.trim()) {
       Alert.alert('Error', 'Please enter your question');
@@ -53,25 +130,41 @@ export default function SubmitQuestionScreen() {
       return;
     }
 
-    // For MVP, skip balance check - payments are mocked
-    // In production, uncomment this check
-    // if (!canAfford) {
-    //   Alert.alert(
-    //     'Insufficient Balance',
-    //     `You need $${price.toFixed(2)} for this reading. Your balance is $${balance.toFixed(2)}.`,
-    //     [
-    //       { text: 'Cancel', style: 'cancel' },
-    //       { text: 'Add Funds', onPress: () => router.push('/(tabs)/wallet') },
-    //     ]
-    //   );
-    //   return;
-    // }
-
     setIsSubmitting(true);
     try {
-      console.log('Submitting question to:', `${BACKEND_URL}/api/questions/`);
-      console.log('User ID:', user?.id);
-      const response = await fetch(`${BACKEND_URL}/api/questions/?user_id=${user?.id || 'guest'}`, {
+      const baseUrl = BACKEND_URL || 'http://192.168.29.227:8000';
+      let uploadedClientVideoUrl: string | null = null;
+
+      // If client attached a video, upload it first
+      if (clientVideoUri) {
+        try {
+          const formData = new FormData();
+          const filename = `client_q_${user?.id || 'client'}_${Date.now()}.mp4`;
+          formData.append('file', {
+            uri: clientVideoUri,
+            name: filename,
+            type: 'video/mp4',
+          } as any);
+          formData.append('user_id', user?.id || 'client');
+
+          const uploadRes = await fetch(`${baseUrl}/api/storage/upload-video`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (uploadRes.ok) {
+            const uploadJson = await uploadRes.json();
+            uploadedClientVideoUrl = uploadJson.url;
+            console.log('Client question video uploaded:', uploadedClientVideoUrl);
+          } else {
+            console.warn('Video upload response not OK, continuing with text');
+          }
+        } catch (uploadErr) {
+          console.warn('Video upload error:', uploadErr);
+        }
+      }
+
+      const response = await fetch(`${baseUrl}/api/questions/?user_id=${user?.id || 'guest'}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -81,6 +174,7 @@ export default function SubmitQuestionScreen() {
           question_text: questionText,
           question_type: 'recorded_video',
           delivery_type: deliveryType,
+          client_video_url: uploadedClientVideoUrl,
           is_third_party: isThirdParty,
           third_party_name: isThirdParty ? thirdPartyName : null,
           third_party_birth_date: isThirdParty ? thirdPartyBirthDate : null,
@@ -98,7 +192,7 @@ export default function SubmitQuestionScreen() {
       console.log('Question submitted successfully:', data);
 
       // Navigate to Readings tab after successful submission
-      router.replace('/(tabs)/search');
+      router.replace('/(tabs)/readings' as any);
     } catch (error: any) {
       console.error('Error submitting question:', error);
       Alert.alert('Error', error.message || 'Failed to submit your question. Please try again.');
@@ -224,28 +318,55 @@ export default function SubmitQuestionScreen() {
                 </Text>
               </View>
             </View>
-            <TouchableOpacity
-              style={styles.recordVideoButton}
-              onPress={() => {
-                Alert.alert(
-                  'Record Video',
-                  'Video recording will open your camera. Maximum duration: 2 minutes.',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { 
-                      text: 'Record',
-                      onPress: () => {
-                        // In production, this would open the video recorder
-                        Alert.alert('Coming Soon', 'Video recording feature will be available soon.');
-                      }
-                    }
-                  ]
-                );
-              }}
-            >
-              <Ionicons name="mic" size={18} color={COLORS.secondary} />
-              <Text style={styles.recordVideoButtonText}>Record Video</Text>
-            </TouchableOpacity>
+
+            {clientVideoUri ? (
+              <View style={styles.attachedVideoContainer}>
+                <View style={styles.attachedVideoHeader}>
+                  <Ionicons name="checkmark-circle" size={24} color="#22C55E" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.attachedVideoTitle}>Video Question Attached</Text>
+                    <Text style={styles.attachedVideoSubtitle}>
+                      {clientVideoDuration ? `${clientVideoDuration}s • ` : ''}Advisor will watch your video
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setClientVideoUri(null)} style={styles.removeVideoButton}>
+                    <Ionicons name="trash-outline" size={20} color={COLORS.error} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.attachedVideoActions}>
+                  <TouchableOpacity
+                    style={styles.previewVideoButton}
+                    onPress={() => {
+                      router.push({
+                        pathname: '/play-recording',
+                        params: {
+                          url: clientVideoUri,
+                          type: 'video',
+                          psychicName: 'Your Question Preview',
+                        },
+                      });
+                    }}
+                  >
+                    <Ionicons name="play" size={16} color={COLORS.primary} />
+                    <Text style={styles.previewVideoText}>Preview Video</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={styles.changeVideoButton} onPress={handleRecordOrPickVideo}>
+                    <Ionicons name="refresh" size={16} color={COLORS.textSecondary} />
+                    <Text style={styles.changeVideoText}>Change</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.recordVideoButton}
+                onPress={handleRecordOrPickVideo}
+              >
+                <Ionicons name="videocam" size={18} color="#FFF" />
+                <Text style={styles.recordVideoButtonText}>Record Video</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -528,6 +649,69 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  attachedVideoContainer: {
+    backgroundColor: '#22C55E10',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#22C55E40',
+    padding: SPACING.md,
+    marginTop: SPACING.md,
+  },
+  attachedVideoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  attachedVideoTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  attachedVideoSubtitle: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  removeVideoButton: {
+    padding: 6,
+  },
+  attachedVideoActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: SPACING.sm,
+    paddingTop: SPACING.sm,
+    borderTopWidth: 1,
+    borderTopColor: '#22C55E20',
+  },
+  previewVideoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary + '20',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 6,
+  },
+  previewVideoText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  changeVideoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 6,
+  },
+  changeVideoText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: COLORS.textSecondary,
   },
   toggleRow: {
     flexDirection: 'row',

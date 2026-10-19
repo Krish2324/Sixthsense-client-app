@@ -19,8 +19,8 @@ import { useAuth } from '../src/context/AuthContext';
 import { apiClient } from '../src/services/api';
 import { Audio } from 'expo-av';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-const WS_URL = BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://');
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const WS_URL = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://');
 
 export default function WaitingForAdvisorScreen() {
   const router = useRouter();
@@ -74,8 +74,35 @@ export default function WaitingForAdvisorScreen() {
   
   // CLI-062: WS ref for instant accept/reject events
   const wsRef = useRef<WebSocket | null>(null);
+  const navigatedRef = useRef(false);
+
+  const navigateToAcceptedSession = (data: any) => {
+    if (navigatedRef.current) return;
+    navigatedRef.current = true;
+    setStatus('accepted');
+    setTimeout(() => {
+      router.replace({
+        pathname: '/chat/[id]',
+        params: {
+          id: data.session_id || `session-${Date.now()}`,
+          psychicId,
+          rate,
+          minutes,
+          serviceType: data.session_type || serviceType,
+          agoraChannel: data.agora_channel || '',
+          agoraAppId: data.agora_app_id || '',
+          agoraUid: String(data.client_uid || 1001),
+          agoraToken: data.client_token || '',
+          requestAccepted: 'true',
+        },
+      });
+    }, 1000);
+  };
+
+  const requestSentRef = useRef(false);
 
   useEffect(() => {
+    if (requestSentRef.current) return;
     // CLI-064: Pre-call low-balance guard
     const callRate = parseFloat(rate || '3.99');
     const callMinutes = parseInt(minutes || '5');
@@ -91,6 +118,7 @@ export default function WaitingForAdvisorScreen() {
       );
       return;
     }
+    requestSentRef.current = true;
     sendSessionRequest();
   }, []);
 
@@ -102,20 +130,7 @@ export default function WaitingForAdvisorScreen() {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'request_accepted' && data.request_id === requestId) {
-          setStatus('accepted');
-          setTimeout(() => {
-            router.replace({
-              pathname: '/chat/[id]',
-              params: {
-                id: data.session_id || `session-${Date.now()}`,
-                psychicId,
-                rate,
-                minutes,
-                serviceType: 'chat',
-                requestAccepted: 'true',
-              },
-            });
-          }, 1500);
+          navigateToAcceptedSession(data);
         } else if (data.type === 'request_rejected' && data.request_id === requestId) {
           setStatus('rejected');
         }
@@ -148,34 +163,16 @@ export default function WaitingForAdvisorScreen() {
     
     const pollInterval = setInterval(async () => {
       try {
-        const response = await fetch(`${BACKEND_URL}/api/chat/request/${requestId}/status`);
-        if (response.ok) {
-          const data = await response.json();
-          
-          if (data.status === 'accepted') {
-            setStatus('accepted');
-            // Navigate to the chat screen - only chat is supported now
-            setTimeout(() => {
-              router.replace({
-                pathname: '/chat/[id]',
-                params: {
-                  id: data.session_id || `session-${Date.now()}`,
-                  psychicId,
-                  rate,
-                  minutes,
-                  serviceType: 'chat',
-                  requestAccepted: 'true',
-                },
-              });
-            }, 1500);
-          } else if (data.status === 'rejected') {
-            setStatus('rejected');
-          }
+        const data = await apiClient.get<any>(`/api/chat/request/${requestId}/status`, false);
+        if (data && data.status === 'accepted') {
+          navigateToAcceptedSession(data);
+        } else if (data && data.status === 'rejected') {
+          setStatus('rejected');
         }
       } catch (err) {
         console.error('Error polling request status:', err);
       }
-    }, 2000); // Poll every 2 seconds
+    }, 1500);
     
     return () => clearInterval(pollInterval);
   }, [requestId, status]);
@@ -216,7 +213,7 @@ export default function WaitingForAdvisorScreen() {
   const handleTryAgain = () => {
     setStatus('sending');
     setCountdown(60);
-    setError(null);
+    requestSentRef.current = true;
     sendSessionRequest();
   };
   

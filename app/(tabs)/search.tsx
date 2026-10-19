@@ -16,7 +16,7 @@ import { SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import { useTheme } from '../../src/context/ThemeContext';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 
 interface ChatSession {
   id: string;
@@ -50,7 +50,7 @@ export default function ChatHistoryScreen() {
         setSessions(data);
       }
     } catch (error) {
-      console.error('Failed to fetch chat history:', error);
+      console.warn('Failed to fetch chat history:', error);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

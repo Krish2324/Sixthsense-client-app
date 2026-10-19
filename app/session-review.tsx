@@ -25,7 +25,7 @@ export default function SessionReviewScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const params = useLocalSearchParams();
   
   const psychicId = params.psychicId as string;
@@ -50,30 +50,41 @@ export default function SessionReviewScreen() {
 
     setIsSubmitting(true);
     try {
-      // CLI-065: Migrate review submission to apiClient
-      await apiClient.post(`/api/reviews/?user_id=${user?.id}`, {
+      const uid = user?.id || 'usr_client';
+      const cleanComment = (reviewText || '').trim();
+
+      // Submit review to backend
+      await apiClient.post(`/api/reviews/?user_id=${uid}`, {
+        user_id: uid,
         psychic_id: psychicId,
         session_id: `session-${Date.now()}`,
         rating: rating,
-        comment: reviewText || null,
+        comment: cleanComment,
       });
 
-      // CLI-066: Migrate tip submission to apiClient
+      // Submit gratuity tip if chosen
       const tipAmount = selectedTip || (customTip ? parseFloat(customTip) : 0);
       if (tipAmount > 0) {
         try {
-          await apiClient.post('/api/tips/', {
-            user_id: user?.id,
+          await apiClient.post(`/api/tips/?user_id=${uid}`, {
+            user_id: uid,
+            client_name: user?.name || 'Client',
             psychic_id: psychicId,
             amount: tipAmount,
           });
-        } catch {
-          console.warn('Tip submission failed, but review was saved');
+          if (typeof refreshUser === 'function') {
+            await refreshUser();
+          }
+        } catch (tipErr: any) {
+          console.warn('Tip submission notice:', tipErr);
+          const tipErrorMsg = tipErr?.message || 'Tip could not be processed';
+          if (Platform.OS === 'web') alert(tipErrorMsg);
+          else Alert.alert('Tip Notice', tipErrorMsg);
         }
       }
 
       const msg = tipAmount > 0
-        ? `Thank you for your ${rating}-star review and $${tipAmount} tip!`
+        ? `Thank you for your ${rating}-star review and $${tipAmount.toFixed(2)} tip!`
         : `Thank you for your ${rating}-star review!`;
 
       if (Platform.OS === 'web') {
@@ -83,7 +94,14 @@ export default function SessionReviewScreen() {
       }
       router.replace('/(tabs)/home');
     } catch (error: any) {
-      const errorMsg = error.message || 'Failed to submit review. Please try again.';
+      let errorMsg = 'Failed to submit review. Please try again.';
+      if (typeof error === 'string') {
+        errorMsg = error;
+      } else if (typeof error?.message === 'string') {
+        errorMsg = error.message;
+      } else if (typeof error?.detail === 'string') {
+        errorMsg = error.detail;
+      }
       if (Platform.OS === 'web') {
         alert(errorMsg);
       } else {

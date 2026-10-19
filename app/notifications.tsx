@@ -77,6 +77,15 @@ export default function NotificationsScreen() {
         allNotifications = [...allNotifications, ...messageNotifs];
       }
       
+      // De-duplicate: promo + message endpoints can return the same notification
+      const seen = new Set<string>();
+      allNotifications = allNotifications.filter((n, idx) => {
+        const key = String(n.id ?? `idx-${idx}`);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
       // Sort by date descending
       allNotifications.sort((a, b) => 
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -163,6 +172,13 @@ export default function NotificationsScreen() {
     
     if (notification.type === 'message') {
       router.push('/messages');
+    } else if (
+      notification.type === 'reading' ||
+      notification.type === 'reading_completed' ||
+      notification.type === 'reading_update' ||
+      notification.type === 'reading_request'
+    ) {
+      router.push('/(tabs)/readings' as any);
     }
   };
 

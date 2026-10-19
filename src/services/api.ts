@@ -1,6 +1,6 @@
 import { getSecureItem, clearAuthData } from './secureStorage';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 const TIMEOUT_MS = 25000; // 25s resilient network timeout (CLI-022)
 const CACHE_TTL_MS = 30000; // 30s response cache (CLI-023)
 
@@ -49,6 +49,20 @@ async function fetchWithTimeout(url: string, options: RequestInit): Promise<Resp
   }
 }
 
+function parseErrorMessage(err: any, status: number): string {
+  if (!err) return `Request failed: ${status}`;
+  if (typeof err === 'string') return err;
+  if (typeof err.detail === 'string') return err.detail;
+  if (Array.isArray(err.detail)) {
+    return err.detail.map((d: any) => d.msg || (typeof d === 'string' ? d : JSON.stringify(d))).join(', ');
+  }
+  if (err.detail && typeof err.detail === 'object') {
+    return err.detail.msg || JSON.stringify(err.detail);
+  }
+  if (typeof err.message === 'string') return err.message;
+  return `Request failed: ${status}`;
+}
+
 // Core API client with Bearer injection, timeout, cache, and 401 handling (CLI-022, CLI-023)
 export const apiClient = {
   async get<T = any>(path: string, useCache = true): Promise<T> {
@@ -73,7 +87,7 @@ export const apiClient = {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.detail || `Request failed: ${response.status}`);
+      throw new Error(parseErrorMessage(err, response.status));
     }
 
     const data = await response.json();
@@ -103,7 +117,7 @@ export const apiClient = {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.detail || `Request failed: ${response.status}`);
+      throw new Error(parseErrorMessage(err, response.status));
     }
 
     return response.json() as Promise<T>;
@@ -126,7 +140,7 @@ export const apiClient = {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.detail || `Request failed: ${response.status}`);
+      throw new Error(parseErrorMessage(err, response.status));
     }
 
     return response.json() as Promise<T>;
@@ -145,7 +159,7 @@ export const apiClient = {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.detail || `Request failed: ${response.status}`);
+      throw new Error(parseErrorMessage(err, response.status));
     }
 
     return response.json() as Promise<T>;

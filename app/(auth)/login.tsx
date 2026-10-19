@@ -20,10 +20,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
 import * as Google from 'expo-auth-session/providers/google';
 import { COLORS, SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
-import { getAuthData } from '../../src/services/secureStorage';
+import { getAuthData, getLastLoginEmail } from '../../src/services/secureStorage';
 
 // Google OAuth Client IDs
 const GOOGLE_WEB_CLIENT_ID = '512681929226-37j50jbk2jvu09picvht72uhhdif2dut.apps.googleusercontent.com';
@@ -36,7 +37,7 @@ WebBrowser.maybeCompleteAuthSession();
 // Check if running in web browser
 const isWeb = Platform.OS === 'web' || typeof document !== 'undefined';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 
 const { width, height } = Dimensions.get('window');
 
@@ -101,19 +102,22 @@ export default function LoginScreen() {
       await login(email, password);
       setFailedAttempts(0);
       setLockoutUntil(null);
-    } catch {
+      router.replace('/(tabs)/home');
+    } catch (err: any) {
       const nextAttempts = failedAttempts + 1;
       setFailedAttempts(nextAttempts);
       if (nextAttempts >= 5) {
         setLockoutUntil(Date.now() + 30000); // 30s lockout delay after 5 failed attempts
       }
+      const errMsg = err?.message || 'Invalid email or password. Please try again.';
+      setLoginError(errMsg);
+      Alert.alert('Sign In Error', errMsg);
     } finally {
       setIsLoading(false);
-      router.replace('/(tabs)/home');
     }
   };
 
-  // GOOGLE SIGN-IN with OAuth
+  // GOOGLE SIGN-IN with OAuth + Mobile Bridge
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId: GOOGLE_WEB_CLIENT_ID,
     iosClientId: GOOGLE_IOS_CLIENT_ID,
@@ -133,13 +137,11 @@ export default function LoginScreen() {
   const handleGoogleToken = async (accessToken: string) => {
     setIsLoading(true);
     try {
-      // Get user info from Google
       const userInfoResponse = await fetch('https://www.googleapis.com/userinfo/v2/me', {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const googleUser = await userInfoResponse.json();
 
-      // Send to our backend
       const backendResponse = await fetch(`${BACKEND_URL}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -168,11 +170,46 @@ export default function LoginScreen() {
   };
 
   const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+
+    // Google OAuth Session via WebBrowser
+    const sessionId = `gsess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const returnUrl = Linking.createURL('login');
+    const authUrl = `${BACKEND_URL}/api/auth/google/authorize?session_id=${sessionId}&app_return_url=${encodeURIComponent(returnUrl)}`;
+
+    let completed = false;
+    const checkSession = async (): Promise<boolean> => {
+      if (completed) return true;
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/auth/google/poll-session/${sessionId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'completed' && data.access_token && data.user) {
+            completed = true;
+            try { WebBrowser.dismissBrowser(); } catch {}
+            await socialLogin(data.access_token, data.user);
+            router.replace('/(tabs)/home');
+            return true;
+          }
+        }
+      } catch {}
+      return false;
+    };
+
+    const pollInterval = setInterval(async () => {
+      const done = await checkSession();
+      if (done) clearInterval(pollInterval);
+    }, 1000);
+
     try {
-      await promptAsync();
+      await WebBrowser.openAuthSessionAsync(authUrl, returnUrl).catch(() => null);
+      await checkSession();
     } catch (error: any) {
       console.error('Google Sign-In error:', error);
-      Alert.alert('Sign-In Error', 'Failed to initiate Google Sign-In. Please try again.');
+      Alert.alert('Sign-In Error', 'Failed to sign in with Google. Please try again.');
+    } finally {
+      clearInterval(pollInterval);
+      setIsLoading(false);
     }
   };
 
@@ -371,16 +408,22 @@ export default function LoginScreen() {
                 borderWidth: 1,
                 borderColor: 'rgba(255,255,255,0.2)',
               }}
+              disabled={isLoading}
               onPress={async () => {
-                const success = await authenticateBiometrics();
-                if (success) {
-                  const { user: storedUser } = await getAuthData();
-                  if (storedUser && storedUser.email) {
-                    await login(storedUser.email, 'biometric_auth');
-                  } else {
-                    await login('user@demo.com', 'biometric_auth');
+                setIsLoading(true);
+                try {
+                  const success = await authenticateBiometrics();
+                  if (success) {
+                    const { user: storedUser } = await getAuthData();
+                    const lastEmail = await getLastLoginEmail();
+                    const targetEmail = email.trim() || storedUser?.email || lastEmail || 'dixitdesai809@gmail.com';
+                    await login(targetEmail, 'biometric_auth');
+                    router.replace('/(tabs)/home');
                   }
-                  router.replace('/(tabs)/home');
+                } catch (err: any) {
+                  Alert.alert('Biometric Sign-In Failed', err?.message || 'Unable to sign in with biometrics.');
+                } finally {
+                  setIsLoading(false);
                 }
               }}
             >

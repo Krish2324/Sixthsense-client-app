@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Animated,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -15,11 +16,13 @@ import { useAuth } from '../context/AuthContext';
 
 const { width } = Dimensions.get('window');
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+export const deliveredNotificationIds = new Set<string>();
 
 interface Notification {
   id: string;
   title: string;
   body: string;
+  message?: string;
   type: string;
   is_read: boolean;
   created_at: string;
@@ -41,11 +44,38 @@ export default function NotificationBanner() {
       const response = await fetch(`${BACKEND_URL}/api/notifications/user/${user.id}?limit=5`).catch(() => null);
       if (response && response.ok) {
         const data = await response.json().catch(() => ({}));
-        const unreadNotifications = (data.notifications || []).filter(
+        const unreadNotifications: Notification[] = (data.notifications || []).filter(
           (n: Notification) => !n.is_read
         );
         setNotifications(unreadNotifications);
         setIsVisible(unreadNotifications.length > 0);
+
+        // Trigger OS heads-up push notification for any fresh unread notification (< 3 min old)
+        if (Platform.OS !== 'web' && unreadNotifications.length > 0) {
+          for (const notif of unreadNotifications) {
+            if (!notif.id || deliveredNotificationIds.has(notif.id)) continue;
+            const createdMs = notif.created_at ? new Date(notif.created_at + (notif.created_at.endsWith('Z') ? '' : 'Z')).getTime() : Date.now();
+            const ageMs = Date.now() - createdMs;
+            deliveredNotificationIds.add(notif.id);
+            if (isNaN(ageMs) || ageMs < 180000) {
+              try {
+                const NotifModule = require('expo-notifications');
+                if (NotifModule && typeof NotifModule.scheduleNotificationAsync === 'function') {
+                  await NotifModule.scheduleNotificationAsync({
+                    content: {
+                      title: notif.title || '🔔 Sixth Sense Notification',
+                      body: notif.body || notif.message || '',
+                      sound: 'default',
+                      priority: NotifModule.AndroidNotificationPriority?.MAX || 'max',
+                      data: { type: notif.type || 'general', notification_id: notif.id },
+                    },
+                    trigger: null,
+                  });
+                }
+              } catch {}
+            }
+          }
+        }
       }
     } catch {
       // Quiet fallback for preview & mobile sandbox
@@ -54,8 +84,8 @@ export default function NotificationBanner() {
 
   useEffect(() => {
     fetchNotifications();
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchNotifications, 30000);
+    // Refresh every 5 seconds for near-real-time push delivery
+    const interval = setInterval(fetchNotifications, 5000);
     return () => clearInterval(interval);
   }, [fetchNotifications]);
 
@@ -113,6 +143,8 @@ export default function NotificationBanner() {
 
   const getNotificationIcon = (type: string) => {
     switch (type) {
+      case 'wallet_credited':
+        return 'wallet';
       case 'promotional':
         return 'sparkles';
       case 'sale':
@@ -130,6 +162,8 @@ export default function NotificationBanner() {
 
   const getNotificationColor = (type: string) => {
     switch (type) {
+      case 'wallet_credited':
+        return '#10B981';
       case 'promotional':
         return colors.secondary;
       case 'sale':
@@ -177,7 +211,7 @@ export default function NotificationBanner() {
             {currentNotification.title}
           </Text>
           <Text style={[styles.body, { color: colors.textSecondary }]} numberOfLines={1}>
-            {currentNotification.body}
+            {currentNotification.body || (currentNotification as any).message}
           </Text>
         </View>
       </Animated.View>

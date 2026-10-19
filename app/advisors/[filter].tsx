@@ -15,9 +15,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING } from '../../src/constants/theme';
+import { psychicEvents, doesPsychicMatchEvent } from '../../src/services/psychicEvents';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 const { width } = Dimensions.get('window');
+
 const CARD_WIDTH = (width - SPACING.md * 3) / 2;
 
 // Sort/Filter options
@@ -142,6 +144,41 @@ export default function AdvisorsListScreen() {
   useEffect(() => {
     fetchPsychics();
   }, [filter]);
+
+  useEffect(() => {
+    const unsubscribe = psychicEvents.subscribe((event) => {
+      setPsychics((prev) =>
+        prev.map((p) => {
+          if (doesPsychicMatchEvent(p, event)) {
+            return {
+              ...p,
+              online_status: event.online_status,
+              is_online: event.online_status === 'online',
+              offers_chat: event.offers_chat !== undefined ? event.offers_chat : event.online_status === 'online',
+            };
+          }
+          return p;
+        })
+      );
+      setPsychicOfWeek((prev: any) => {
+        if (prev?.psychic && doesPsychicMatchEvent(prev.psychic, event)) {
+          return {
+            ...prev,
+            psychic: {
+              ...prev.psychic,
+              online_status: event.online_status,
+              is_online: event.online_status === 'online',
+              offers_chat: event.offers_chat !== undefined ? event.offers_chat : event.online_status === 'online',
+            },
+          };
+        }
+        return prev;
+      });
+    });
+
+    return unsubscribe;
+  }, []);
+
 
   // Get sorted psychics
   const sortedPsychics = sortPsychics(psychics, sortBy);

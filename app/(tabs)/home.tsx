@@ -21,8 +21,9 @@ import Section from '../../src/components/Section';
 import HorizontalPsychicCard from '../../src/components/HorizontalPsychicCard';
 import { HomeSEO } from '../../src/components/SEO';
 import NotificationBanner from '../../src/components/NotificationBanner';
+import { psychicEvents, doesPsychicMatchEvent } from '../../src/services/psychicEvents';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -47,6 +48,61 @@ export default function HomeScreen() {
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Real-time WebSocket listener for advisor online/offline changes
+  useEffect(() => {
+    const unsubscribe = psychicEvents.subscribe((event) => {
+      const updateList = (list: any[]) =>
+        list.map((p) => {
+          if (doesPsychicMatchEvent(p, event)) {
+            return {
+              ...p,
+              online_status: event.online_status,
+              is_online: event.online_status === 'online',
+              offers_chat: event.offers_chat !== undefined ? event.offers_chat : event.online_status === 'online',
+              offers_phone: event.offers_phone !== undefined ? event.offers_phone : event.online_status === 'online',
+              offers_video: event.offers_video !== undefined ? event.offers_video : event.online_status === 'online',
+              offers_video_call: event.offers_video_call !== undefined ? event.offers_video_call : event.online_status === 'online',
+            };
+          }
+          return p;
+        });
+
+      setPsychics((prev) => {
+        const updated = updateList(prev);
+        setLiveChatPsychics(
+          updated.filter((p: any) => p.offers_chat && (p.online_status === 'online' || p.online_status === 'busy'))
+        );
+        return updated;
+      });
+      setNewPsychics(updateList);
+      setHighlyRated(updateList);
+      setRecommended(updateList);
+      setTopRated(updateList);
+      setTrending(updateList);
+      setSuggested(updateList);
+      setRecentlyVisited(updateList);
+      setPsychicOfWeek((prev: any) => {
+        if (prev?.psychic && doesPsychicMatchEvent(prev.psychic, event)) {
+          return {
+            ...prev,
+            psychic: {
+              ...prev.psychic,
+              online_status: event.online_status,
+              is_online: event.online_status === 'online',
+              offers_chat: event.offers_chat !== undefined ? event.offers_chat : event.online_status === 'online',
+              offers_phone: event.offers_phone !== undefined ? event.offers_phone : event.online_status === 'online',
+              offers_video: event.offers_video !== undefined ? event.offers_video : event.online_status === 'online',
+              offers_video_call: event.offers_video_call !== undefined ? event.offers_video_call : event.online_status === 'online',
+            },
+          };
+        }
+        return prev;
+      });
+    });
+
+    return unsubscribe;
+  }, []);
 
   const fetchActiveSale = useCallback(async () => {
     try {
@@ -156,6 +212,7 @@ export default function HomeScreen() {
     await fetchActiveSale();
     setRefreshing(false);
   };
+
 
   const handleFilterPress = (filter: string) => {
     router.push({

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +31,7 @@ export default function PlayRecordingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const videoRef = useRef<Video>(null);
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -39,6 +41,27 @@ export default function PlayRecordingScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   // CLI-050: Audio playback speed state (1.0x, 1.5x, 2.0x)
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
+
+  // Use only the exact advisor video URL (no fake sample video)
+  const videoUri = useMemo(() => {
+    if (!url || typeof url !== 'string' || url === 'test_mode_video') {
+      return null;
+    }
+    const trimmed = url.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('file://')) {
+      return trimmed;
+    }
+    return null;
+  }, [url]);
+
+  useEffect(() => {
+    Audio.setAudioModeAsync({
+      playsInSilentModeIOS: true,
+      allowsRecordingIOS: false,
+      staysActiveInBackground: false,
+      shouldDuckAndroid: true,
+    }).catch(() => null);
+  }, []);
 
   const togglePlaybackSpeed = async () => {
     const nextRate = playbackRate === 1.0 ? 1.5 : playbackRate === 1.5 ? 2.0 : 1.0;
@@ -156,6 +179,24 @@ export default function PlayRecordingScreen() {
       }
       setIsPlaying(status.isPlaying);
       setIsLoading(false);
+      setLoadError(null);
+    } else if ((status as any).error) {
+      console.warn('Video playback status error:', (status as any).error);
+      setIsLoading(false);
+      setLoadError('Failed to play video');
+    }
+  };
+
+  const toggleVideoPlayPause = async () => {
+    if (!videoRef.current) return;
+    try {
+      if (isPlaying) {
+        await videoRef.current.pauseAsync();
+      } else {
+        await videoRef.current.playAsync();
+      }
+    } catch (err) {
+      console.warn('Toggle playback error:', err);
     }
   };
 
@@ -253,35 +294,123 @@ export default function PlayRecordingScreen() {
         </View>
       ) : (
         // Video Player
-        <View style={styles.videoContainer}>
-          <Video
-            source={{ uri: url || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' }}
-            style={styles.video}
-            useNativeControls
-            resizeMode={ResizeMode.CONTAIN}
-            isLooping={false}
-            onPlaybackStatusUpdate={handleVideoPlaybackStatusUpdate}
-            onLoad={() => setIsLoading(false)}
-          />
-          
-          {isLoading && (
-            <View style={styles.videoLoading}>
-              <ActivityIndicator size="large" color="#FFF" />
+        <View style={[styles.videoContainer, { backgroundColor: colors.background }]}>
+          {!videoUri ? (
+            <View style={[styles.videoPlayerWrapper, { padding: SPACING.lg, justifyContent: 'center', alignItems: 'center' }]}>
+              <Ionicons name="videocam-off-outline" size={48} color={colors.textMuted} />
+              <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '700', marginTop: 12, textAlign: 'center' }}>
+                Video Not Yet Uploaded
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginTop: 6, textAlign: 'center' }}>
+                Advisor will record and upload the video response here.
+              </Text>
             </View>
+          ) : (
+            <TouchableOpacity
+              activeOpacity={0.95}
+              style={styles.videoPlayerWrapper}
+              onPress={toggleVideoPlayPause}
+            >
+              <Video
+                ref={videoRef}
+                source={{ uri: videoUri }}
+                style={styles.video}
+                useNativeControls
+                resizeMode={ResizeMode.CONTAIN}
+                shouldPlay={true}
+                isLooping={false}
+                onPlaybackStatusUpdate={handleVideoPlaybackStatusUpdate}
+                onLoad={() => {
+                  setIsLoading(false);
+                  setLoadError(null);
+                }}
+                onError={(e) => {
+                  console.warn('Video load error:', e);
+                  setIsLoading(false);
+                  setLoadError('Failed to play video. Please check connection or retry.');
+                }}
+              />
+
+              {isLoading && (
+                <View style={styles.videoLoading}>
+                  <ActivityIndicator size="large" color="#FFF" />
+                  <Text style={{ color: '#FFF', marginTop: 10, fontSize: 13, fontWeight: '500' }}>
+                    Loading video...
+                  </Text>
+                </View>
+              )}
+
+              {loadError && (
+                <View style={styles.videoLoading}>
+                  <Ionicons name="alert-circle-outline" size={44} color="#FF6B6B" />
+                  <Text style={{ color: '#FFF', marginTop: 8, fontSize: 14, fontWeight: '600' }}>
+                    {loadError}
+                  </Text>
+                  <TouchableOpacity
+                    style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: colors.primary, borderRadius: 20 }}
+                    onPress={async () => {
+                      if (videoRef.current) {
+                        setIsLoading(true);
+                        setLoadError(null);
+                        await videoRef.current.replayAsync().catch(() => null);
+                      }
+                    }}
+                  >
+                    <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {!isLoading && !isPlaying && !loadError && (
+                <View style={styles.playOverlay}>
+                  <View style={styles.playOverlayButton}>
+                    <Ionicons name="play" size={38} color="#FFF" style={{ marginLeft: 4 }} />
+                  </View>
+                </View>
+              )}
+            </TouchableOpacity>
           )}
-          
-          {/* Video Info */}
-          <View style={[styles.videoInfo, { backgroundColor: colors.backgroundCard }]}>
-            <Text style={[styles.videoInfoTitle, { color: colors.textPrimary }]}>
-              {type === 'video' ? 'Video Call Recording' : 'Recorded Reading'}
-            </Text>
-            <Text style={[styles.videoInfoSubtitle, { color: colors.textMuted }]}>
-              {psychicName} • {formatDate(date || '')}
-            </Text>
-            <Text style={[styles.videoInfoDuration, { color: colors.textSecondary }]}>
-              Duration: {formatDuration(playbackDuration)}
-            </Text>
-          </View>
+
+          {/* Video Info & Controls */}
+          <ScrollView style={styles.videoDetailsScroll} contentContainerStyle={{ padding: SPACING.md }}>
+            <View style={[styles.videoInfo, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}>
+              <View style={styles.videoInfoHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.videoInfoTitle, { color: colors.textPrimary }]}>
+                    {type === 'video' ? 'Video Reading Response' : 'Recorded Reading'}
+                  </Text>
+                  <Text style={[styles.videoInfoSubtitle, { color: colors.textMuted }]}>
+                    by {psychicName || 'Psychic Advisor'} • {formatDate(date || '')}
+                  </Text>
+                </View>
+                <View style={styles.verifiedBadge}>
+                  <Ionicons name="checkmark-circle" size={16} color="#22C55E" />
+                  <Text style={styles.verifiedText}>Completed</Text>
+                </View>
+              </View>
+
+              <View style={[styles.durationRow, { borderTopColor: colors.border }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="time-outline" size={18} color={colors.primary} />
+                  <Text style={[styles.videoInfoDuration, { color: colors.textSecondary }]}>
+                    Duration: {formatDuration(playbackDuration)}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.replayButton, { backgroundColor: colors.primary + '20' }]}
+                  onPress={async () => {
+                    if (videoRef.current) {
+                      await videoRef.current.replayAsync().catch(() => null);
+                    }
+                  }}
+                >
+                  <Ionicons name="reload" size={15} color={colors.primary} />
+                  <Text style={[styles.replayText, { color: colors.primary }]}>Replay</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
         </View>
       )}
     </View>
@@ -381,20 +510,54 @@ const styles = StyleSheet.create({
   // Video Player Styles
   videoContainer: {
     flex: 1,
+  },
+  videoPlayerWrapper: {
+    width: width,
+    height: width * 0.5625, // 16:9 widescreen ratio
     backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
   },
   video: {
     width: width,
-    height: width * 0.75,
+    height: width * 0.5625,
+  },
+  playOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  playOverlayButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.8)',
   },
   videoLoading: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  videoDetailsScroll: {
+    flex: 1,
   },
   videoInfo: {
+    borderRadius: 16,
+    borderWidth: 1,
     padding: SPACING.lg,
+  },
+  videoInfoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: SPACING.sm,
   },
   videoInfoTitle: {
     fontSize: 18,
@@ -403,10 +566,44 @@ const styles = StyleSheet.create({
   },
   videoInfoSubtitle: {
     fontSize: 14,
-    marginBottom: 8,
+  },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#22C55E15',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  verifiedText: {
+    color: '#22C55E',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  durationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: SPACING.md,
+    borderTopWidth: 1,
+    marginTop: 10,
   },
   videoInfoDuration: {
     fontSize: 14,
+    fontWeight: '500',
+  },
+  replayButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 4,
+  },
+  replayText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   errorContainer: {
     flexDirection: 'row',

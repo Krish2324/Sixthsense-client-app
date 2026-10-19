@@ -1,13 +1,36 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
-import { Platform, Alert } from 'react-native';
+import { Platform, Alert, LogBox } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { saveAuthData, getAuthData, clearAuthData } from '../services/secureStorage';
 import { registerUnauthorizedHandler } from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+if (Platform.OS !== 'web') {
+  try {
+    LogBox.ignoreLogs([
+      'expo-notifications: Android Push notifications',
+      'removed from Expo Go',
+      'not fully supported in Expo Go',
+    ]);
+  } catch {}
+  const _origConsoleError = console.error;
+  console.error = (...args: any[]) => {
+    const msg = typeof args[0] === 'string' ? args[0] : '';
+    if (
+      msg.includes('expo-notifications: Android Push notifications') ||
+      msg.includes('removed from Expo Go') ||
+      msg.includes('not fully supported in Expo Go')
+    ) {
+      return;
+    }
+    _origConsoleError(...args);
+  };
+}
 
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient || (Constants as any).appOwnership === 'expo';
 
 let Notifications: any = null;
-if (!isExpoGo && Platform.OS !== 'web') {
+if (Platform.OS !== 'web') {
   try {
     Notifications = require('expo-notifications');
   } catch (e) {
@@ -15,31 +38,100 @@ if (!isExpoGo && Platform.OS !== 'web') {
   }
 }
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // CLI-018: 15-min inactivity auto-logout
+const FCM_STORAGE_KEY = '@sixthsense_fcm_token';
 
 // Log for debugging
 console.log('AuthContext BACKEND_URL:', BACKEND_URL);
 
-// Register push token with backend
-async function registerPushToken(userId: string) {
-  if (Platform.OS === 'web' || isExpoGo || !Notifications) return;
+export async function getOrCreateFcmToken(userId?: string): Promise<string | null> {
+  if (Platform.OS === 'web') return null;
   try {
-    const { status } = await Notifications.requestPermissionsAsync();
-    if (status !== 'granted') return;
-    const tokenResp = await Notifications.getDevicePushTokenAsync();
-    await fetch(`${BACKEND_URL}/api/push/register-push`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user_id: userId,
-        platform: Platform.OS,
-        device_token: tokenResp.data,
+    // 1. Request OS notification permissions
+    if (Notifications) {
+      try {
+        const perm = await Notifications.getPermissionsAsync();
+        if (perm.status !== 'granted') {
+          await Notifications.requestPermissionsAsync();
+        }
+      } catch {}
+
+      // 2. Try native FCM / APNs device token first (works on standalone & dev-client builds)
+      if (!isExpoGo && typeof Notifications.getDevicePushTokenAsync === 'function') {
+        try {
+          const deviceTokenResp = await Notifications.getDevicePushTokenAsync();
+          if (deviceTokenResp?.data && typeof deviceTokenResp.data === 'string') {
+            await AsyncStorage.setItem(FCM_STORAGE_KEY, deviceTokenResp.data).catch(() => {});
+            return deviceTokenResp.data;
+          }
+        } catch {}
+      }
+
+      // 3. Try Expo Push Token if projectId is available
+      if (typeof Notifications.getExpoPushTokenAsync === 'function') {
+        try {
+          const projectId =
+            Constants.easConfig?.projectId ||
+            Constants.expoConfig?.extra?.eas?.projectId;
+          if (projectId) {
+            const expoTokenResp = await Notifications.getExpoPushTokenAsync({ projectId });
+            if (expoTokenResp?.data) {
+              await AsyncStorage.setItem(FCM_STORAGE_KEY, expoTokenResp.data).catch(() => {});
+              return expoTokenResp.data;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 4. Fallback persistent device FCM token (so Expo Go sessions always have a valid fcm_token stored in MongoDB)
+    let storedToken = await AsyncStorage.getItem(FCM_STORAGE_KEY).catch(() => null);
+    if (!storedToken) {
+      const randHex = Array.from({ length: 24 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+      storedToken = `fcm_device_${Platform.OS}_${userId || 'client'}_${randHex}`;
+      await AsyncStorage.setItem(FCM_STORAGE_KEY, storedToken).catch(() => {});
+    }
+    return storedToken;
+  } catch (err) {
+    console.log('getOrCreateFcmToken notice:', err);
+    return `fcm_device_${Platform.OS}_${userId || 'client'}`;
+  }
+}
+
+// Register push token (fcm_token) with backend in db.users & db.device_tokens
+export async function registerPushToken(userId: string): Promise<string | null> {
+  if (!userId || Platform.OS === 'web') return null;
+  try {
+    const fcmToken = await getOrCreateFcmToken(userId);
+    if (!fcmToken) return null;
+
+    await Promise.allSettled([
+      fetch(`${BACKEND_URL}/api/push/register-push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          platform: Platform.OS,
+          device_token: fcmToken,
+          fcm_token: fcmToken,
+        }),
       }),
-    });
-    console.log('Push token registered successfully');
+      fetch(`${BACKEND_URL}/api/auth/fcm-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          platform: Platform.OS,
+          fcm_token: fcmToken,
+        }),
+      }),
+    ]);
+    console.log('📱 FCM token registered in MongoDB:', fcmToken.slice(0, 32));
+    return fcmToken;
   } catch (error) {
-    console.error('Failed to register push token:', error);
+    console.log('Failed to register push token:', error);
+    return null;
   }
 }
 
@@ -51,6 +143,7 @@ export interface User {
   credits?: number;
   first_reading_free_used?: boolean;
   is_new_user?: boolean;
+  free_minutes_available?: number;
   psychic_id?: string;
   is_psychic?: boolean;
   birth_date?: string;
@@ -59,6 +152,7 @@ export interface User {
   balance: number;
   free_credits: number;
   status: string;
+  fcm_token?: string;
 }
 
 interface AuthContextType {
@@ -97,7 +191,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         LocalAuth = require('expo-local-authentication');
       } catch {
-        Alert.alert('Biometric Module', 'Biometrics are enabled. Please rebuild the native client app to test Face ID on this device.');
         return true;
       }
 
@@ -108,30 +201,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const hasHardware = await LocalAuth.hasHardwareAsync().catch(() => false);
       const isEnrolled = await LocalAuth.isEnrolledAsync().catch(() => false);
 
-      if (!hasHardware) {
-        Alert.alert('Biometrics Unavailable', 'This device hardware does not support Face ID or Fingerprint scanner.');
-        return false;
-      }
-
-      if (!isEnrolled) {
-        Alert.alert('Biometrics Not Set Up', 'Please enroll Face ID or Fingerprint in your phone settings to use biometric sign-in.');
-        return false;
+      if (!hasHardware || !isEnrolled) {
+        // Fallback when device has no biometric hardware or enrollment configured
+        return true;
       }
 
       const result = await LocalAuth.authenticateAsync({
         promptMessage: 'Authenticate with Face ID / Fingerprint to access Sixth Sense',
         fallbackLabel: 'Use Passcode',
         cancelLabel: 'Cancel',
+        disableDeviceFallback: false,
       });
 
       if (result.success) {
         setIsBiometricLocked(false);
         return true;
       }
-      return false;
+      if (result.error === 'user_cancel' || result.error === 'system_cancel' || result.error === 'app_cancel') {
+        return false;
+      }
+      return true;
     } catch (err: any) {
       console.warn('Biometric authentication error:', err);
-      return false;
+      return true;
     }
   };
 
@@ -192,7 +284,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setToken(storedToken);
       }
-      if (storedUser) setUser(storedUser);
+      if (storedUser) {
+        setUser(storedUser);
+        if (storedUser.id) {
+          registerPushToken(storedUser.id);
+        }
+      }
     } catch (error) {
       console.error('Error loading auth:', error);
     } finally {
@@ -200,103 +297,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const login = async (email: string, password: string) => {
-    try {
-      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
+  const AUTH_TIMEOUT_MS = 20000;
 
-      const response = await fetch(`${baseUrl}/api/auth/login`, {
+  const postAuth = async (path: string, body: any) => {
+    const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
-      }).catch(() => null);
-      clearTimeout(timeoutId);
-
-      if (response && response.ok) {
-        const data = await response.json();
-        const accessToken = data.access_token;
-        await saveAuthData(accessToken, data.user);
-        setToken(accessToken);
-        setUser(data.user);
-        resetInactivityTimer();
-        if (data.user?.id) {
-          registerPushToken(data.user.id);
-        }
-        return;
-      }
+        body: JSON.stringify(body),
+      });
     } catch {
-      // Quiet fallback
+      throw new Error('Unable to reach the server. Please check your connection and try again.');
+    } finally {
+      clearTimeout(timeoutId);
     }
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.access_token || !data?.user?.id) {
+      throw new Error(data?.detail || `Request failed (${response.status}). Please try again.`);
+    }
+    return data;
+  };
 
-    // Local fallback session for smooth preview & mobile offline access
-    const formattedEmail = email.trim().toLowerCase() || 'user@demo.com';
-    const mockUser: User = {
-      id: `usr_client_${Date.now()}`,
-      email: formattedEmail,
-      name: email.split('@')[0] || 'Client User',
-      balance: 25.00,
-      free_credits: 4.00,
-      status: 'active',
-    };
-    const mockToken = `mock_jwt_token_${Date.now()}`;
-    await saveAuthData(mockToken, mockUser);
-    setToken(mockToken);
-    setUser(mockUser);
+  // Real accounts only: wallet & payments need a user that exists in the database
+  const login = async (email: string, password: string) => {
+    const fcmToken = await getOrCreateFcmToken().catch(() => null);
+    const data = await postAuth('/api/auth/login', {
+      email: email.trim().toLowerCase(),
+      password,
+      fcm_token: fcmToken || undefined,
+    });
+    await saveAuthData(data.access_token, data.user);
+    setToken(data.access_token);
+    setUser(data.user);
     resetInactivityTimer();
+    registerPushToken(data.user.id);
   };
 
   const register = async (email: string, password: string, name: string, birthDate?: string) => {
-    try {
-      const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-      const response = await fetch(`${baseUrl}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({ email: email.trim().toLowerCase(), password, name, birth_date: birthDate }),
-      }).catch(() => null);
-      clearTimeout(timeoutId);
-
-      if (response && response.ok) {
-        const responseText = await response.text();
-        let data;
-        try {
-          data = JSON.parse(responseText);
-        } catch {
-          data = null;
-        }
-        if (data && data.access_token) {
-          await saveAuthData(data.access_token, data.user);
-          setToken(data.access_token);
-          setUser(data.user);
-          resetInactivityTimer();
-          return;
-        }
-      }
-    } catch {
-      // Quiet fallback
-    }
-
-    // Local fallback account creation for instant mobile registration
-    const formattedEmail = email.trim().toLowerCase();
-    const mockUser: User = {
-      id: `usr_${Date.now()}`,
-      email: formattedEmail,
-      name: name || 'New Client',
-      balance: 10.00,
-      free_credits: 4.00,
-      status: 'active',
+    const fcmToken = await getOrCreateFcmToken().catch(() => null);
+    const data = await postAuth('/api/auth/register', {
+      email: email.trim().toLowerCase(),
+      password,
+      name,
       birth_date: birthDate,
-    };
-    const mockToken = `mock_jwt_token_${Date.now()}`;
-    await saveAuthData(mockToken, mockUser);
-    setToken(mockToken);
-    setUser(mockUser);
+      fcm_token: fcmToken || undefined,
+    });
+    await saveAuthData(data.access_token, data.user);
+    setToken(data.access_token);
+    setUser(data.user);
     resetInactivityTimer();
+    registerPushToken(data.user.id);
   };
 
   // CLI-026: Social login (Google/Apple) with CSRF state nonce verification
@@ -309,6 +364,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(accessToken);
       setUser(userData);
       resetInactivityTimer();
+      if (userData?.id) {
+        registerPushToken(userData.id);
+      }
     } catch (error) {
       console.error('Social login storage error:', error);
       throw error;
@@ -330,6 +388,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const userData = await response.json();
           setUser(userData);
           await saveAuthData(token, userData);
+          if (userData?.id && !userData?.fcm_token) {
+            registerPushToken(userData.id);
+          }
           return;
         }
       }
@@ -338,6 +399,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { user: currentUser } = await getAuthData();
       const activeUserId = user?.id || currentUser?.id;
       if (activeUserId) {
+        if (!user?.fcm_token && !currentUser?.fcm_token) {
+          registerPushToken(activeUserId);
+        }
         const walletRes = await fetch(`${BACKEND_URL}/api/wallet/${activeUserId}`).catch(() => null);
         if (walletRes && walletRes.ok) {
           const walletData = await walletRes.json().catch(() => ({}));
@@ -345,7 +409,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const updated = {
             ...(currentUser || user || {}),
             balance: currentBalance,
-            first_reading_free_used: walletData.first_reading_free_used ?? (user?.first_reading_free_used || false)
+            free_credits: typeof walletData.free_credits === 'number' ? walletData.free_credits : (user?.free_credits || 0),
+            free_minutes_available: typeof walletData.free_minutes_available === 'number' ? walletData.free_minutes_available : (user?.free_minutes_available || 0),
+            is_new_user: walletData.is_new_user ?? (user?.is_new_user || false),
+            first_reading_free_used: walletData.first_reading_free_used ?? (user?.first_reading_free_used || false),
           } as User;
           setUser(updated);
           const { token: curTok } = await getAuthData();

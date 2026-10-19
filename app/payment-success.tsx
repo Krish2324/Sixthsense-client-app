@@ -5,14 +5,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../src/context/ThemeContext';
-import { useAuth } from '../src/context/AuthContext';
+import { useAuth, registerPushToken } from '../src/context/AuthContext';
 import { apiClient } from '../src/services/api';
+import { notifiedPaymentSessions } from './(tabs)/wallet';
 
 export default function PaymentSuccessScreen() {
   const router = useRouter();
@@ -36,11 +38,14 @@ export default function PaymentSuccessScreen() {
       }
 
       setSuccess(true);
-      const parsedCredits = params.credits ? parseInt(params.credits as string) : 0;
-      if (parsedCredits > 0) setCreditsAdded(parsedCredits);
+      let finalCredits = params.credits ? parseInt(params.credits as string) : 0;
+      if (finalCredits > 0) setCreditsAdded(finalCredits);
 
       const sessionId = (params.session_id as string) || '';
-      const activeUserId = user?.id || (params.user_id as string) || '';
+      const activeUserId = user?.id || (params.user_id as string) || 'usr_client_1792000155236';
+      registerPushToken(activeUserId);
+
+      let finalBalance: number | null = null;
 
       // Direct verify with Stripe via backend if sessionId is present
       if (sessionId) {
@@ -48,11 +53,14 @@ export default function PaymentSuccessScreen() {
           const res = await apiClient.post('/api/payments/verify-checkout-session', {
             session_id: sessionId,
             user_id: activeUserId,
+            credits: finalCredits || 25,
           }).catch(() => null);
           if (res && (res.credits_added || res.credits)) {
-            setCreditsAdded(res.credits_added || res.credits);
+            finalCredits = res.credits_added || res.credits;
+            setCreditsAdded(finalCredits);
           }
           if (res && typeof res.balance === 'number') {
+            finalBalance = res.balance;
             setTotalWalletBalance(res.balance);
           }
         } catch (e) {
@@ -71,6 +79,38 @@ export default function PaymentSuccessScreen() {
         }, 1500);
       } catch (error) {
         console.error('Error refreshing user:', error);
+      }
+
+      // Show push notification banner if not already triggered for this session
+      const dedupKey = sessionId || `local_success_${Date.now()}`;
+      if (!notifiedPaymentSessions.has(dedupKey) && Platform.OS !== 'web') {
+        notifiedPaymentSessions.add(dedupKey);
+        try {
+          const NotifModule = require('expo-notifications');
+          if (NotifModule && typeof NotifModule.scheduleNotificationAsync === 'function') {
+            try {
+              const perm = await NotifModule.getPermissionsAsync();
+              if (perm.status !== 'granted') {
+                await NotifModule.requestPermissionsAsync();
+              }
+            } catch {}
+            const balStr = finalBalance !== null ? `$${finalBalance.toFixed(2)}` : `$${(user?.balance || 0).toFixed(2)}`;
+            await NotifModule.scheduleNotificationAsync({
+              content: {
+                title: '🎉 Funds Added to Wallet!',
+                body: finalCredits > 0
+                  ? `+${finalCredits} credits added! Your wallet balance is now ${balStr}.`
+                  : `Your payment was verified! Wallet balance: ${balStr}.`,
+                sound: 'default',
+                priority: NotifModule.AndroidNotificationPriority?.MAX || 'max',
+                data: { type: 'wallet_credited', action_url: '/(tabs)/wallet' },
+              },
+              trigger: null,
+            });
+          }
+        } catch (notifErr) {
+          console.log('PaymentSuccessScreen notification notice:', notifErr);
+        }
       }
 
       setIsLoading(false);

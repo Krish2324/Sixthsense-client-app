@@ -20,12 +20,13 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { COLORS, SPACING, SHADOWS } from '../../src/constants/theme';
-import { useAuth } from '../../src/context/AuthContext';
+import { useAuth, registerPushToken } from '../../src/context/AuthContext';
 import { useTheme } from '../../src/context/ThemeContext';
 import { apiClient } from '../../src/services/api';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const WEBSITE_URL = 'https://www.sixthsensepsychics.com';
+export const notifiedPaymentSessions = new Set<string>();
 
 // Show payments on all platforms - this is for real services (psychic consultations), not digital goods
 // Apple's 30% fee only applies to digital content/subscriptions, not service marketplaces
@@ -187,27 +188,35 @@ export default function WalletScreen() {
     }
   };
 
-  const triggerPushNotification = async (title: string, body: string) => {
-    // Note: The backend dispatches remote push notifications to device tokens via send_push.
-    // In Expo Go on SDK 53, require('expo-notifications') on Android logs a red console error.
-    // Guard strictly so Expo Go never tries to require expo-notifications.
+  const triggerPushNotification = async (title: string, body: string, sessionId?: string) => {
     try {
-      const isExpo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient || (Constants as any)?.appOwnership === 'expo';
-      if (!isExpo && Platform.OS !== 'web') {
+      if (sessionId) {
+        if (notifiedPaymentSessions.has(sessionId)) return;
+        notifiedPaymentSessions.add(sessionId);
+      }
+      if (Platform.OS !== 'web') {
         const NotifModule = require('expo-notifications');
         if (NotifModule && typeof NotifModule.scheduleNotificationAsync === 'function') {
+          try {
+            const perm = await NotifModule.getPermissionsAsync();
+            if (perm.status !== 'granted') {
+              await NotifModule.requestPermissionsAsync();
+            }
+          } catch {}
           await NotifModule.scheduleNotificationAsync({
             content: {
               title,
               body,
-              sound: true,
+              sound: 'default',
+              priority: NotifModule.AndroidNotificationPriority?.MAX || 'max',
+              data: { type: 'wallet_credited', action_url: '/(tabs)/wallet' },
             },
             trigger: null,
           });
         }
       }
-    } catch {
-      // Quietly ignore in development/Expo Go
+    } catch (err) {
+      console.log('Push notification trigger notice:', err);
     }
   };
 
@@ -267,11 +276,8 @@ export default function WalletScreen() {
             await fetchPaymentMethods();
             triggerPushNotification(
               '🎉 Funds Added to Wallet!',
-              `+${res.credits_added || res.credits || expectedCredits || 'Your'} credits added! Your balance is now $${(res.balance || totalBalance).toFixed(2)}.`
-            );
-            Alert.alert(
-              'Payment Complete! 🎉',
-              `${res.credits_added || res.credits || expectedCredits || 'Your'} credits have been added to your wallet balance.`
+              `+${res.credits_added || res.credits || expectedCredits || 'Your'} credits added! Your balance is now $${(res.balance || totalBalance).toFixed(2)}.`,
+              sessionId
             );
             return;
           }
@@ -291,6 +297,7 @@ export default function WalletScreen() {
       safeRefreshUser();
       fetchTransactions();
       fetchPaymentMethods();
+      registerPushToken(user?.id || 'usr_client_1792000155236');
     }, [user?.id])
   );
 
@@ -298,6 +305,7 @@ export default function WalletScreen() {
     safeRefreshUser();
     fetchTransactions();
     fetchPaymentMethods();
+    registerPushToken(user?.id || 'usr_client_1792000155236');
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
@@ -321,20 +329,23 @@ export default function WalletScreen() {
 
     setIsLoading(true);
     try {
+      const activeUserId = user?.id || 'usr_client_1792000155236';
+      registerPushToken(activeUserId);
+
       const appReturnUrl = Linking.createURL('payment-success', {
         queryParams: {
           success: 'true',
           credits: String(credits),
-          user_id: user?.id || 'usr_client_1792000155236',
+          user_id: activeUserId,
         }
       });
-      const backendBase = BACKEND_URL || 'http://192.168.29.228:8000';
+      const backendBase = BACKEND_URL || 'http://192.168.29.227:8000';
       const webSuccessUrl = `${backendBase}/api/payments/checkout-success`;
 
       const data = await apiClient.post('/api/payments/create-checkout-session', {
         amount: Math.round(amount * 100),
         credits: credits,
-        user_id: user?.id || 'usr_client_1792000155236',
+        user_id: activeUserId,
         app_return_url: appReturnUrl,
         method: payMethod,
       }).catch((err) => {
@@ -361,7 +372,7 @@ export default function WalletScreen() {
             try {
               const vRes = await apiClient.post('/api/payments/verify-checkout-session', {
                 session_id: data.session_id,
-                user_id: user?.id || 'usr_client_1792000155236',
+                user_id: activeUserId,
                 credits: credits,
                 amount: amount,
               });
@@ -372,11 +383,8 @@ export default function WalletScreen() {
                 await fetchPaymentMethods();
                 triggerPushNotification(
                   '🎉 Funds Added to Wallet!',
-                  `+${vRes.credits_added || vRes.credits || credits} credits added! Your balance is now $${(vRes.balance || totalBalance).toFixed(2)}.`
-                );
-                Alert.alert(
-                  'Payment Complete! 🎉',
-                  `${vRes.credits_added || vRes.credits || credits} credits have been added to your wallet balance.`
+                  `+${vRes.credits_added || vRes.credits || credits} credits added! Your balance is now $${(vRes.balance || totalBalance).toFixed(2)}.`,
+                  data.session_id
                 );
                 return;
               }
@@ -459,7 +467,7 @@ export default function WalletScreen() {
                 <Text style={styles.breakdownLabel}>Wallet Balance</Text>
                 <Text style={styles.breakdownValue}>${(user?.balance || 0).toFixed(2)}</Text>
               </View>
-              {user?.is_new_user && !user?.first_reading_free_used && (
+              {!user?.first_reading_free_used && ((user?.free_credits || 0) > 0 || (user?.free_minutes_available || 0) > 0) && (
                 <>
                   <View style={styles.dividerVertical} />
                   <View style={styles.breakdownItem}>
@@ -479,8 +487,8 @@ export default function WalletScreen() {
         {showPayments ? (
           /* FULL PAYMENT UI FOR WEBSITE & ANDROID */
           <View style={styles.addFundsSection}>
-            {/* Show Free Minutes Banner for NEW USERS */}
-            {!user?.first_reading_free_used && (
+            {/* Show Free Minutes Banner ONLY when user has free credit / free chat offer */}
+            {!user?.first_reading_free_used && ((user?.free_credits || 0) > 0 || (user?.free_minutes_available || 0) > 0) && (
               <View style={[styles.freeMinutesBanner, { backgroundColor: colors.primary + '15', borderColor: colors.primary }]}>
                 <Ionicons name="gift" size={28} color={colors.primary} />
                 <View style={styles.freeMinutesContent}>
@@ -669,9 +677,9 @@ export default function WalletScreen() {
           <View style={styles.addFundsSection}>
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Credits</Text>
             
-            {/* Check if user has used free minutes or has low balance */}
-            {user?.first_reading_free_used || (user?.balance || 0) > 0 ? (
-              /* User has used free minutes - direct to website */
+            {/* Check if user has an active free chat offer */}
+            {user?.first_reading_free_used || ((user?.free_credits || 0) <= 0 && (user?.free_minutes_available || 0) <= 0) ? (
+              /* User has used free minutes or has no free offer - direct to website */
               <View style={[styles.freeMinutesBox, { backgroundColor: colors.backgroundCard, borderColor: colors.primary }]}>
                 <Ionicons name="card-outline" size={40} color={colors.primary} />
                 <Text style={[styles.freeMinutesTitle, { color: colors.textPrimary }]}>

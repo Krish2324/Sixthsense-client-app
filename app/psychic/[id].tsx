@@ -17,8 +17,9 @@ import { Video, ResizeMode } from 'expo-av';
 import { COLORS, SPACING, SHADOWS } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import StartSessionModal from '../../src/components/StartSessionModal';
+import { psychicEvents, doesPsychicMatchEvent } from '../../src/services/psychicEvents';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 
 export default function PsychicProfileScreen() {
   const { id } = useLocalSearchParams();
@@ -42,6 +43,31 @@ export default function PsychicProfileScreen() {
     trackRecentlyVisited();
     fetchReviews();
   }, [id]);
+
+  // Real-time WebSocket listener for advisor status changes
+  useEffect(() => {
+    const unsubscribe = psychicEvents.subscribe((event) => {
+      setPsychic((prev: any) => {
+        if (!prev) return prev;
+        if (doesPsychicMatchEvent(prev, event) || event.psychic_id === id || (event.alias_ids || []).includes(id as string)) {
+          const isOnline = event.online_status === 'online';
+          return {
+            ...prev,
+            online_status: event.online_status,
+            is_online: isOnline,
+            offers_chat: event.offers_chat !== undefined ? event.offers_chat : isOnline,
+            offers_phone: event.offers_phone !== undefined ? event.offers_phone : isOnline,
+            offers_video: event.offers_video !== undefined ? event.offers_video : isOnline,
+            offers_video_call: event.offers_video_call !== undefined ? event.offers_video_call : (event.offers_video !== undefined ? event.offers_video : isOnline),
+          };
+        }
+        return prev;
+      });
+    });
+
+    return unsubscribe;
+  }, [id]);
+
 
   const trackRecentlyVisited = async () => {
     if (!user?.id || !id) return;
@@ -160,16 +186,19 @@ export default function PsychicProfileScreen() {
       Alert.alert('Unavailable', 'This advisor is currently unavailable.');
       return;
     }
-    // Only chat is supported now
-    setSelectedService('chat');
+    setSelectedService(serviceType);
     setShowSessionModal(true);
   };
 
   const handleSessionStart = (minutes: number, serviceType: 'chat' | 'phone' | 'video') => {
     setShowSessionModal(false);
     
-    // Only use chat rate
-    const rate = psychic.chat_rate;
+    const rate =
+      serviceType === 'video'
+        ? (psychic.video_call_rate || psychic.video_rate || 7.99)
+        : serviceType === 'phone'
+        ? (psychic.phone_rate || 5.99)
+        : (psychic.chat_rate || 3.99);
     
     // Navigate to waiting screen - psychic must accept the request first
     router.push({
@@ -178,7 +207,7 @@ export default function PsychicProfileScreen() {
         psychicId: psychic.id,
         psychicName: psychic.name,
         psychicAvatar: psychic.profile_picture,
-        serviceType: 'chat',
+        serviceType: serviceType,
         rate: rate.toString(),
         minutes: minutes.toString(),
       },
@@ -284,44 +313,174 @@ export default function PsychicProfileScreen() {
           </View>
         )}
 
-        {/* Live Chat Session - Only Service */}
+        {/* Live Reading Options - Chat, Audio Call & Video Call */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Live Chat Session</Text>
-          <TouchableOpacity 
-            style={[
-              styles.chatServiceCard,
-              !psychic.offers_chat && styles.serviceCardDisabled
-            ]}
-            onPress={() => psychic.offers_chat && handleStartService('chat')}
-            activeOpacity={psychic.offers_chat ? 0.8 : 1}
-            disabled={!psychic.offers_chat}
-          >
-            <View style={[
-              styles.serviceIconBg, 
-              { backgroundColor: psychic.offers_chat ? COLORS.chatGreen + '20' : '#E5E7EB' }
-            ]}>
-              <Ionicons 
-                name="chatbubble" 
-                size={28} 
-                color={psychic.offers_chat ? COLORS.chatGreen : '#9CA3AF'} 
-              />
-            </View>
-            <View style={styles.chatServiceInfo}>
-              <Text style={[
-                styles.chatServiceTitle,
-                !psychic.offers_chat && styles.serviceTitleDisabled
-              ]}>Start Live Chat</Text>
-              <Text style={[
-                styles.chatServicePrice,
-                !psychic.offers_chat && styles.servicePriceDisabled
-              ]}>${psychic.chat_rate?.toFixed(2)}/min</Text>
-            </View>
-            {psychic.offers_chat ? (
-              <Ionicons name="chevron-forward" size={24} color={COLORS.chatGreen} />
-            ) : (
-              <Text style={styles.serviceUnavailable}>Unavailable</Text>
-            )}
-          </TouchableOpacity>
+          <Text style={styles.sectionTitle}>Live Reading Options</Text>
+          <View style={{ gap: 10 }}>
+            {/* Live Chat */}
+            <TouchableOpacity 
+              style={[
+                styles.chatServiceCard,
+                !(psychic.online_status === 'online' && (psychic.offers_chat ?? true)) && styles.serviceCardDisabled
+              ]}
+              onPress={() => handleStartService('chat')}
+              activeOpacity={psychic.online_status === 'online' ? 0.8 : 1}
+              disabled={!(psychic.online_status === 'online' && (psychic.offers_chat ?? true))}
+            >
+              <View style={[
+                styles.serviceIconBg, 
+                { backgroundColor: (psychic.online_status === 'online' && (psychic.offers_chat ?? true)) ? COLORS.chatGreen + '20' : '#E5E7EB' }
+              ]}>
+                <Ionicons 
+                  name="chatbubble" 
+                  size={26} 
+                  color={(psychic.online_status === 'online' && (psychic.offers_chat ?? true)) ? COLORS.chatGreen : '#9CA3AF'} 
+                />
+              </View>
+              <View style={styles.chatServiceInfo}>
+                <Text style={[
+                  styles.chatServiceTitle,
+                  !(psychic.online_status === 'online' && (psychic.offers_chat ?? true)) && styles.serviceTitleDisabled
+                ]}>Start Live Chat</Text>
+                <Text style={[
+                  styles.chatServicePrice,
+                  !(psychic.online_status === 'online' && (psychic.offers_chat ?? true)) && styles.servicePriceDisabled
+                ]}>${(psychic.chat_rate || 3.99).toFixed(2)}/min</Text>
+              </View>
+              {(psychic.online_status === 'online' && (psychic.offers_chat ?? true)) ? (
+                <Ionicons name="chevron-forward" size={24} color={COLORS.chatGreen} />
+              ) : (
+                <Text style={styles.serviceUnavailable}>Unavailable</Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Audio Call */}
+            <TouchableOpacity 
+              style={[
+                styles.chatServiceCard,
+                !(psychic.online_status === 'online' && (psychic.offers_phone ?? true)) && styles.serviceCardDisabled
+              ]}
+              onPress={() => handleStartService('phone')}
+              activeOpacity={psychic.online_status === 'online' ? 0.8 : 1}
+              disabled={!(psychic.online_status === 'online' && (psychic.offers_phone ?? true))}
+            >
+              <View style={[
+                styles.serviceIconBg, 
+                { backgroundColor: (psychic.online_status === 'online' && (psychic.offers_phone ?? true)) ? COLORS.primary + '20' : '#E5E7EB' }
+              ]}>
+                <Ionicons 
+                  name="call" 
+                  size={26} 
+                  color={(psychic.online_status === 'online' && (psychic.offers_phone ?? true)) ? COLORS.primary : '#9CA3AF'} 
+                />
+              </View>
+              <View style={styles.chatServiceInfo}>
+                <Text style={[
+                  styles.chatServiceTitle,
+                  !(psychic.online_status === 'online' && (psychic.offers_phone ?? true)) && styles.serviceTitleDisabled
+                ]}>Start Audio Call</Text>
+                <Text style={[
+                  styles.chatServicePrice,
+                  !(psychic.online_status === 'online' && (psychic.offers_phone ?? true)) && styles.servicePriceDisabled
+                ]}>${(psychic.phone_rate || 5.99).toFixed(2)}/min</Text>
+              </View>
+              {(psychic.online_status === 'online' && (psychic.offers_phone ?? true)) ? (
+                <Ionicons name="chevron-forward" size={24} color={COLORS.primary} />
+              ) : (
+                <Text style={styles.serviceUnavailable}>Unavailable</Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Video Call */}
+            <TouchableOpacity 
+              style={[
+                styles.chatServiceCard,
+                !(psychic.online_status === 'online' && (psychic.offers_video ?? psychic.offers_video_call ?? true)) && styles.serviceCardDisabled
+              ]}
+              onPress={() => handleStartService('video')}
+              activeOpacity={psychic.online_status === 'online' ? 0.8 : 1}
+              disabled={!(psychic.online_status === 'online' && (psychic.offers_video ?? psychic.offers_video_call ?? true))}
+            >
+              <View style={[
+                styles.serviceIconBg, 
+                { backgroundColor: (psychic.online_status === 'online' && (psychic.offers_video ?? psychic.offers_video_call ?? true)) ? '#8B5CF620' : '#E5E7EB' }
+              ]}>
+                <Ionicons 
+                  name="videocam" 
+                  size={26} 
+                  color={(psychic.online_status === 'online' && (psychic.offers_video ?? psychic.offers_video_call ?? true)) ? '#8B5CF6' : '#9CA3AF'} 
+                />
+              </View>
+              <View style={styles.chatServiceInfo}>
+                <Text style={[
+                  styles.chatServiceTitle,
+                  !(psychic.online_status === 'online' && (psychic.offers_video ?? psychic.offers_video_call ?? true)) && styles.serviceTitleDisabled
+                ]}>Start Video Call</Text>
+                <Text style={[
+                  styles.chatServicePrice,
+                  !(psychic.online_status === 'online' && (psychic.offers_video ?? psychic.offers_video_call ?? true)) && styles.servicePriceDisabled
+                ]}>${(psychic.video_call_rate || psychic.video_rate || 7.99).toFixed(2)}/min</Text>
+              </View>
+              {(psychic.online_status === 'online' && (psychic.offers_video ?? psychic.offers_video_call ?? true)) ? (
+                <Ionicons name="chevron-forward" size={24} color="#8B5CF6" />
+              ) : (
+                <Text style={styles.serviceUnavailable}>Unavailable</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Ask a Question (Recorded Video Reading) */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Ask a Question (Recorded Video)</Text>
+          <View style={styles.recordedVideoOptions}>
+            {/* Standard Question - $12 */}
+            <TouchableOpacity
+              style={styles.videoOption}
+              onPress={() => handleRequestVideo('standard')}
+              activeOpacity={0.8}
+            >
+              <View style={styles.videoOptionHeader}>
+                <View style={[styles.serviceIconBg, { backgroundColor: COLORS.primary + '20' }]}>
+                  <Ionicons name="videocam" size={24} color={COLORS.primary} />
+                </View>
+                <View style={styles.videoOptionInfo}>
+                  <Text style={styles.videoOptionTitle}>Ask a Question</Text>
+                  <Text style={styles.videoOptionDesc}>24 hours delivery • Detailed video answer</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <Text style={styles.videoOptionPrice}>$12.00</Text>
+                <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+              </View>
+            </TouchableOpacity>
+
+            {/* Emergency / Rush Question - $20 */}
+            <TouchableOpacity
+              style={[styles.videoOption, styles.videoOptionUrgent]}
+              onPress={() => handleRequestVideo('emergency')}
+              activeOpacity={0.8}
+            >
+              <View style={styles.videoOptionHeader}>
+                <View style={[styles.serviceIconBg, { backgroundColor: COLORS.error + '20' }]}>
+                  <Ionicons name="flash" size={24} color={COLORS.error} />
+                </View>
+                <View style={styles.videoOptionInfo}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text style={styles.videoOptionTitle}>Rush / Urgent</Text>
+                    <View style={{ backgroundColor: COLORS.error + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                      <Text style={{ color: COLORS.error, fontSize: 10, fontWeight: '700' }}>1 HOUR</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.videoOptionDesc}>Guaranteed 1-hour fast video response</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <Text style={[styles.videoOptionPrice, { color: COLORS.error }]}>$20.00</Text>
+                <Ionicons name="chevron-forward" size={18} color={COLORS.error} />
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* About Section */}
@@ -435,32 +594,72 @@ export default function PsychicProfileScreen() {
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* Fixed Action Button */}
-      <View style={[styles.actionBar, { paddingBottom: insets.bottom + SPACING.md }]}>
-        <TouchableOpacity
-          style={[
-            styles.chatButton,
-            psychic.online_status !== 'online' && styles.chatButtonDisabled,
-          ]}
-          onPress={() => handleStartService('chat')}
-          disabled={psychic.online_status !== 'online'}
-        >
-          <LinearGradient
-            colors={
-              psychic.online_status === 'online'
-                ? [COLORS.primary, COLORS.primaryDark]
-                : [COLORS.textMuted, COLORS.textMuted]
-            }
-            style={styles.chatButtonGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
+      {/* Fixed Action Bar with Chat, Audio Call, and Video Call */}
+      <View style={[styles.actionBar, { paddingBottom: insets.bottom + SPACING.md, flexDirection: 'row', gap: 8 }]}>
+        {psychic.online_status === 'online' ? (
+          <>
+            <TouchableOpacity
+              style={{ flex: 1, borderRadius: 14, overflow: 'hidden', opacity: (psychic.offers_chat ?? true) ? 1 : 0.45 }}
+              onPress={() => handleStartService('chat')}
+              disabled={!(psychic.offers_chat ?? true)}
+            >
+              <LinearGradient
+                colors={[COLORS.chatGreen || '#10B981', '#059669']}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, gap: 6 }}
+              >
+                <Ionicons name="chatbubble" size={18} color="#FFF" />
+                <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>
+                  Chat ${psychic.chat_rate || '3.99'}
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ flex: 1, borderRadius: 14, overflow: 'hidden', opacity: (psychic.offers_phone ?? true) ? 1 : 0.45 }}
+              onPress={() => handleStartService('phone')}
+              disabled={!(psychic.offers_phone ?? true)}
+            >
+              <LinearGradient
+                colors={[COLORS.primary, COLORS.primaryDark]}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, gap: 6 }}
+              >
+                <Ionicons name="call" size={18} color="#FFF" />
+                <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>
+                  Audio ${psychic.phone_rate || '5.99'}
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ flex: 1, borderRadius: 14, overflow: 'hidden', opacity: (psychic.offers_video ?? psychic.offers_video_call ?? true) ? 1 : 0.45 }}
+              onPress={() => handleStartService('video')}
+              disabled={!(psychic.offers_video ?? psychic.offers_video_call ?? true)}
+            >
+              <LinearGradient
+                colors={['#8B5CF6', '#6D28D9']}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, gap: 6 }}
+              >
+                <Ionicons name="videocam" size={18} color="#FFF" />
+                <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>
+                  Video ${psychic.video_call_rate || psychic.video_rate || '7.99'}
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={[styles.chatButton, styles.chatButtonDisabled, { flex: 1 }]}
+            disabled
           >
-            <Ionicons name="chatbubbles" size={20} color="#FFF" />
-            <Text style={styles.chatButtonText}>
-              {psychic.online_status === 'online' ? `Start Chat $${psychic.chat_rate}/min` : 'Offline'}
-            </Text>
-          </LinearGradient>
-        </TouchableOpacity>
+            <LinearGradient
+              colors={[COLORS.textMuted, COLORS.textMuted]}
+              style={styles.chatButtonGradient}
+            >
+              <Ionicons name="moon" size={20} color="#FFF" />
+              <Text style={styles.chatButtonText}>Advisor is Offline</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Session Modal */}
@@ -469,9 +668,9 @@ export default function PsychicProfileScreen() {
         onClose={() => setShowSessionModal(false)}
         onStart={handleSessionStart}
         psychicName={psychic?.name || ''}
-        chatRate={psychic?.chat_rate || 0}
-        phoneRate={psychic?.phone_rate || 0}
-        videoRate={psychic?.video_call_rate || 0}
+        chatRate={psychic?.chat_rate || 3.99}
+        phoneRate={psychic?.phone_rate || 5.99}
+        videoRate={psychic?.video_call_rate || psychic?.video_rate || 7.99}
         balance={balance}
         serviceType={selectedService}
       />
@@ -669,18 +868,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: COLORS.backgroundCard,
-    borderRadius: 14,
-    padding: SPACING.md,
+    borderRadius: 16,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   videoOptionUrgent: {
-    borderColor: COLORS.error + '50',
+    borderColor: COLORS.error + '40',
+    backgroundColor: '#FEF2F2',
   },
   videoOptionHeader: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SPACING.md,
+    gap: 12,
+    marginRight: 8,
   },
   videoOptionInfo: {
     flex: 1,
@@ -688,15 +891,16 @@ const styles = StyleSheet.create({
   videoOptionTitle: {
     color: COLORS.textPrimary,
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   videoOptionDesc: {
     color: COLORS.textSecondary,
     fontSize: 12,
+    marginTop: 2,
   },
   videoOptionPrice: {
     color: COLORS.textPrimary,
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
   },
   description: {

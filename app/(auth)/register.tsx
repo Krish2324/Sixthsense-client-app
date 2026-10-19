@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
 import * as Google from 'expo-auth-session/providers/google';
 import { COLORS, SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
@@ -31,7 +32,7 @@ const GOOGLE_ANDROID_CLIENT_ID = '512681929226-ps4skp32f0q6qusn493nq9bdqummvqfv.
 // Ensure WebBrowser redirect completes properly
 WebBrowser.maybeCompleteAuthSession();
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
 
 // Check if running in web browser
 const isWeb = Platform.OS === 'web' || typeof document !== 'undefined';
@@ -130,11 +131,46 @@ export default function RegisterScreen() {
   };
 
   const handleGoogleSignUp = async () => {
+    setIsLoading(true);
+
+    // Google OAuth Session via WebBrowser
+    const sessionId = `gsess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const returnUrl = Linking.createURL('register');
+    const authUrl = `${BACKEND_URL}/api/auth/google/authorize?session_id=${sessionId}&app_return_url=${encodeURIComponent(returnUrl)}`;
+
+    let completed = false;
+    const checkSession = async (): Promise<boolean> => {
+      if (completed) return true;
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/auth/google/poll-session/${sessionId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'completed' && data.access_token && data.user) {
+            completed = true;
+            try { WebBrowser.dismissBrowser(); } catch {}
+            await socialLogin(data.access_token, data.user);
+            router.replace('/(tabs)/home');
+            return true;
+          }
+        }
+      } catch {}
+      return false;
+    };
+
+    const pollInterval = setInterval(async () => {
+      const done = await checkSession();
+      if (done) clearInterval(pollInterval);
+    }, 1000);
+
     try {
-      await promptAsync();
+      await WebBrowser.openAuthSessionAsync(authUrl, returnUrl).catch(() => null);
+      await checkSession();
     } catch (error: any) {
       console.error('Google Sign-Up error:', error);
-      Alert.alert('Sign-Up Error', 'Failed to initiate Google Sign-Up. Please try again.');
+      Alert.alert('Sign-Up Error', 'Failed to sign up with Google. Please try again.');
+    } finally {
+      clearInterval(pollInterval);
+      setIsLoading(false);
     }
   };
 
@@ -205,12 +241,10 @@ export default function RegisterScreen() {
       return;
     }
 
-    const hasNumber = /\d/.test(password);
-    const hasUpper = /[A-Z]/.test(password);
-    if (password.length < 8 || !hasNumber || !hasUpper) {
+    if (password.length < 6) {
       Alert.alert(
-        'Password Security Requirements',
-        'Password must be at least 8 characters long and contain at least 1 uppercase letter and 1 number.'
+        'Password Too Short',
+        'Password must be at least 6 characters long.'
       );
       return;
     }
@@ -223,21 +257,12 @@ export default function RegisterScreen() {
     setIsLoading(true);
     try {
       await register(email, password, name, birthDate || undefined);
-    } catch {
-      // Quiet fallback
+      router.replace('/(tabs)/home');
+    } catch (err: any) {
+      const errMsg = err?.message || 'Registration failed. Please try again.';
+      Alert.alert('Sign Up Error', errMsg);
     } finally {
       setIsLoading(false);
-      const alertMsg = 'Your account has been created! Enjoy your first 4 minutes FREE on your first reading.';
-      if (Platform.OS === 'web') {
-        alert(`Welcome!\n\n${alertMsg}`);
-        router.replace('/(tabs)/home');
-      } else {
-        Alert.alert(
-          'Welcome!',
-          alertMsg,
-          [{ text: 'Start Exploring', onPress: () => router.replace('/(tabs)/home') }]
-        );
-      }
     }
   };
 

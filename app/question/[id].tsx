@@ -42,6 +42,7 @@ interface Question {
   is_third_party: boolean;
   third_party_details: any;
   video_response_url: string | null;
+  psychic_name?: string;
 }
 
 export default function QuestionDetailScreen() {
@@ -293,7 +294,21 @@ export default function QuestionDetailScreen() {
         {question.status === 'completed' && question.video_response_url && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Video Response</Text>
-            <TouchableOpacity style={styles.videoCard}>
+            <TouchableOpacity
+              style={styles.videoCard}
+              activeOpacity={0.8}
+              onPress={() => {
+                router.push({
+                  pathname: '/play-recording',
+                  params: {
+                    url: question.video_response_url || '',
+                    type: 'video',
+                    psychicName: question.psychic_name || 'Advisor',
+                    date: question.created_at,
+                  },
+                });
+              }}
+            >
               <Ionicons name="play-circle" size={48} color={COLORS.primary} />
               <Text style={styles.videoText}>Watch Your Reading</Text>
             </TouchableOpacity>

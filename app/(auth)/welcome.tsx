@@ -124,7 +124,7 @@ export default function WelcomeScreen() {
         <View style={[styles.buttons, { paddingBottom: insets.bottom + 24 }]}>
           <TouchableOpacity
             style={styles.primaryButton}
-            onPress={() => router.push('/(auth)/register')}
+            onPress={() => router.push('/(auth)/login')}
             activeOpacity={0.8}
           >
             <LinearGradient
@@ -140,10 +140,12 @@ export default function WelcomeScreen() {
 
           <TouchableOpacity
             style={styles.secondaryButton}
-            onPress={() => router.push('/(auth)/login')}
+            onPress={() => router.push('/(auth)/register')}
             activeOpacity={0.8}
           >
-            <Text style={styles.secondaryButtonText}>I already have an account</Text>
+            <Text style={styles.secondaryButtonText}>
+              Don't have an account? <Text style={styles.signUpHighlight}>Sign Up</Text>
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -280,12 +282,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   secondaryButton: {
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   secondaryButtonText: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 14,
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 15,
     fontWeight: '500',
+  },
+  signUpHighlight: {
+    color: '#9B7BD4',
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 });

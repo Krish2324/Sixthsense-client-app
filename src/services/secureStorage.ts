@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 
 const TOKEN_KEY = '__6th_sense_client_token';
 const USER_KEY = '__6th_sense_client_user';
+const LAST_EMAIL_KEY = '__6th_sense_last_email';
 
 // ADV-016: Use hardware-backed SecureStore with AsyncStorage web fallback
 export const setSecureItem = async (key: string, value: string): Promise<void> => {
@@ -59,6 +60,13 @@ export const saveAuthData = async (token: string, user: any): Promise<void> => {
   const sanitizedUser = sanitizeUserForStorage(user);
   await setSecureItem(TOKEN_KEY, token);
   await setSecureItem(USER_KEY, JSON.stringify(sanitizedUser));
+  if (user?.email && !String(user.email).endsWith('@sixthsense.com')) {
+    await setSecureItem(LAST_EMAIL_KEY, String(user.email).trim().toLowerCase());
+  }
+};
+
+export const getLastLoginEmail = async (): Promise<string | null> => {
+  return await getSecureItem(LAST_EMAIL_KEY);
 };
 
 export const getAuthData = async (): Promise<{ token: string | null; user: any | null }> => {

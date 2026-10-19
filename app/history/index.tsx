@@ -164,49 +164,57 @@ export default function HistoryScreen() {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const userId = user?.id || 'mock-user-123';
+      if (!user?.id) {
+        setChatHistory([]);
+        setCallHistory([]);
+        setVideoHistory([]);
+        setRecordedReadings([]);
+        return;
+      }
+      
+      const userId = user.id;
       
       // Fetch chat history
       const chatRes = await fetch(`${BACKEND_URL}/api/history/chats/${userId}?user_type=client`);
       if (chatRes.ok) {
         const data = await chatRes.json();
-        setChatHistory(data.length > 0 ? data : MOCK_CHAT_HISTORY);
+        setChatHistory(Array.isArray(data) ? data : []);
       } else {
-        setChatHistory(MOCK_CHAT_HISTORY);
+        setChatHistory([]);
       }
       
       // Fetch call history
       const callRes = await fetch(`${BACKEND_URL}/api/history/calls/${userId}?user_type=client&call_type=phone`);
       if (callRes.ok) {
         const data = await callRes.json();
-        setCallHistory(data.length > 0 ? data : MOCK_CALL_HISTORY);
+        setCallHistory(Array.isArray(data) ? data : []);
       } else {
-        setCallHistory(MOCK_CALL_HISTORY);
+        setCallHistory([]);
       }
       
       // Fetch video history
       const videoRes = await fetch(`${BACKEND_URL}/api/history/calls/${userId}?user_type=client&call_type=video`);
       if (videoRes.ok) {
         const data = await videoRes.json();
-        setVideoHistory(data.length > 0 ? data : MOCK_VIDEO_HISTORY);
+        setVideoHistory(Array.isArray(data) ? data : []);
       } else {
-        setVideoHistory(MOCK_VIDEO_HISTORY);
+        setVideoHistory([]);
       }
 
       // Fetch recorded readings
       const recordedRes = await fetch(`${BACKEND_URL}/api/history/recorded/${userId}?user_type=client`);
       if (recordedRes.ok) {
         const data = await recordedRes.json();
-        setRecordedReadings(data.length > 0 ? data : MOCK_RECORDED_READINGS);
+        setRecordedReadings(Array.isArray(data) ? data : []);
       } else {
-        setRecordedReadings(MOCK_RECORDED_READINGS);
+        setRecordedReadings([]);
       }
     } catch (error) {
       console.error('Failed to fetch history:', error);
-      setChatHistory(MOCK_CHAT_HISTORY);
-      setCallHistory(MOCK_CALL_HISTORY);
-      setVideoHistory(MOCK_VIDEO_HISTORY);
-      setRecordedReadings(MOCK_RECORDED_READINGS);
+      setChatHistory([]);
+      setCallHistory([]);
+      setVideoHistory([]);
+      setRecordedReadings([]);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
