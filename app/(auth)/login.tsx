@@ -37,7 +37,7 @@ WebBrowser.maybeCompleteAuthSession();
 // Check if running in web browser
 const isWeb = Platform.OS === 'web' || typeof document !== 'undefined';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
 
 const { width, height } = Dimensions.get('window');
 

@@ -23,7 +23,7 @@ import { HomeSEO } from '../../src/components/SEO';
 import NotificationBanner from '../../src/components/NotificationBanner';
 import { psychicEvents, doesPsychicMatchEvent } from '../../src/services/psychicEvents';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();

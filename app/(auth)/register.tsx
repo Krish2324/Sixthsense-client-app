@@ -32,7 +32,7 @@ const GOOGLE_ANDROID_CLIENT_ID = '512681929226-ps4skp32f0q6qusn493nq9bdqummvqfv.
 // Ensure WebBrowser redirect completes properly
 WebBrowser.maybeCompleteAuthSession();
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
 
 // Check if running in web browser
 const isWeb = Platform.OS === 'web' || typeof document !== 'undefined';

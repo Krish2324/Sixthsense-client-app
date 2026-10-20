@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING } from '../../src/constants/theme';
 import { psychicEvents, doesPsychicMatchEvent } from '../../src/services/psychicEvents';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
 const { width } = Dimensions.get('window');
 
 const CARD_WIDTH = (width - SPACING.md * 3) / 2;

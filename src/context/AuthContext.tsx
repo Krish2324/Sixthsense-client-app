@@ -38,7 +38,7 @@ if (Platform.OS !== 'web') {
   }
 }
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // CLI-018: 15-min inactivity auto-logout
 const FCM_STORAGE_KEY = '@sixthsense_fcm_token';
 
@@ -300,7 +300,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const AUTH_TIMEOUT_MS = 20000;
 
   const postAuth = async (path: string, body: any) => {
-    const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+    const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
     let response: Response;

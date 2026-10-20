@@ -19,7 +19,7 @@ import { useAuth } from '../src/context/AuthContext';
 import { apiClient } from '../src/services/api';
 import { Audio } from 'expo-av';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
 const WS_URL = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://');
 
 export default function WaitingForAdvisorScreen() {

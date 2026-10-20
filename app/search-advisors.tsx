@@ -234,16 +234,20 @@ export default function SearchAdvisorsScreen() {
               >
                 {/* Profile Image */}
                 <View style={styles.imageContainer}>
-                  {psychic.profile_image ? (
-                    <Image 
-                      source={{ uri: psychic.profile_image }} 
-                      style={styles.profileImage}
-                    />
-                  ) : (
-                    <View style={styles.avatarPlaceholder}>
-                      <Ionicons name="person" size={32} color={COLORS.textMuted} />
-                    </View>
-                  )}
+                  {(() => {
+                    const rawUri = psychic.profile_picture || psychic.profile_image;
+                    const uri = (rawUri && rawUri.startsWith('http')) 
+                      ? rawUri 
+                      : (rawUri && !rawUri.startsWith('file://')) 
+                        ? rawUri 
+                        : 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400';
+                    return (
+                      <Image 
+                        source={{ uri }} 
+                        style={styles.profileImage}
+                      />
+                    );
+                  })()}
                   {/* Status Badge */}
                   <View style={[styles.statusBadge, { backgroundColor: getStatusColor(psychic.online_status) }]} />
                 </View>

@@ -20,7 +20,7 @@ import { COLORS, SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import * as ImagePicker from 'expo-image-picker';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
 
 export default function SubmitQuestionScreen() {
   const { psychicId, psychicName } = useLocalSearchParams();
@@ -132,7 +132,7 @@ export default function SubmitQuestionScreen() {
 
     setIsSubmitting(true);
     try {
-      const baseUrl = BACKEND_URL || 'http://192.168.29.227:8000';
+      const baseUrl = BACKEND_URL || 'http://192.168.29.73:8000';
       let uploadedClientVideoUrl: string | null = null;
 
       // If client attached a video, upload it first

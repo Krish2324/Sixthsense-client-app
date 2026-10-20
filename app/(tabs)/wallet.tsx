@@ -339,7 +339,7 @@ export default function WalletScreen() {
           user_id: activeUserId,
         }
       });
-      const backendBase = BACKEND_URL || 'http://192.168.29.227:8000';
+      const backendBase = BACKEND_URL || 'http://192.168.29.73:8000';
       const webSuccessUrl = `${backendBase}/api/payments/checkout-success`;
 
       const data = await apiClient.post('/api/payments/create-checkout-session', {
