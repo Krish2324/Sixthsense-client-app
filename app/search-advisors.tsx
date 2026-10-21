@@ -28,8 +28,10 @@ interface Psychic {
   id: string;
   name: string;
   specialties: string[];
-  rating: number;
+  rating?: number;
+  average_rating?: number;
   total_readings: number;
+  total_reviews?: number;
   price_per_minute?: number;
   chat_rate?: number;
   phone_rate?: number;
@@ -234,9 +236,9 @@ export default function SearchAdvisorsScreen() {
               >
                 {/* Profile Image */}
                 <View style={styles.imageContainer}>
-                  {psychic.profile_image ? (
+                  {(psychic.profile_picture || psychic.profile_image) ? (
                     <Image 
-                      source={{ uri: psychic.profile_image }} 
+                      source={{ uri: psychic.profile_picture || psychic.profile_image }} 
                       style={styles.profileImage}
                     />
                   ) : (
@@ -260,13 +262,13 @@ export default function SearchAdvisorsScreen() {
                   {/* Rating */}
                   <View style={styles.ratingRow}>
                     <Ionicons name="star" size={12} color={COLORS.gold} />
-                    <Text style={styles.ratingText}>{psychic.rating?.toFixed(1) || '5.0'}</Text>
-                    <Text style={styles.reviewCount}>({psychic.total_readings || 0})</Text>
+                    <Text style={styles.ratingText}>{(psychic.average_rating || psychic.rating || 5.0).toFixed(1)}</Text>
+                    <Text style={styles.reviewCount}>({psychic.total_reviews ?? psychic.total_readings ?? 0})</Text>
                   </View>
 
                   {/* Price */}
                   <View style={styles.priceRow}>
-                    <Text style={styles.priceText}>${psychic.price_per_minute?.toFixed(2) || '2.99'}</Text>
+                    <Text style={styles.priceText}>${(psychic.chat_rate || psychic.price_per_minute || 2.99).toFixed(2)}</Text>
                     <Text style={styles.perMinute}>/min</Text>
                   </View>
                 </View>
