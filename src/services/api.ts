@@ -1,6 +1,10 @@
 import { getSecureItem, clearAuthData } from './secureStorage';
 
+<<<<<<< HEAD
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
+=======
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.73:8000';
+>>>>>>> d21fd378f5c2e0469efa0fbb30478a57603e3c34
 const TIMEOUT_MS = 25000; // 25s resilient network timeout (CLI-022)
 const CACHE_TTL_MS = 30000; // 30s response cache (CLI-023)
 
