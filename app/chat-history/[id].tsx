@@ -17,7 +17,7 @@ import { COLORS, SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import { useTheme } from '../../src/context/ThemeContext';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
 
 interface HistoryMessage {
   id: string;
@@ -36,6 +36,7 @@ export default function ChatHistoryDetailScreen() {
 
   const [session, setSession] = useState<any>(null);
   const [messages, setMessages] = useState<HistoryMessage[]>([]);
+  const [advisorNotes, setAdvisorNotes] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
@@ -51,7 +52,21 @@ export default function ChatHistoryDetailScreen() {
         if (sessRes.ok) {
           const sessData = await sessRes.json();
           setSession(sessData);
+          if (sessData.notes || sessData.psychic_notes) {
+            setAdvisorNotes(sessData.notes || sessData.psychic_notes);
+          }
         }
+
+        // Also fetch from dedicated notes endpoint
+        try {
+          const notesRes = await fetch(`${BACKEND_URL}/api/sessions/${id}/notes`);
+          if (notesRes.ok) {
+            const nData = await notesRes.json();
+            if (nData?.notes) {
+              setAdvisorNotes(nData.notes);
+            }
+          }
+        } catch {}
 
         if (msgRes.ok) {
           const msgsData = await msgRes.json();
@@ -151,18 +166,65 @@ export default function ChatHistoryDetailScreen() {
           </Text>
         </View>
       ) : messages.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="chatbubble-ellipses-outline" size={48} color={colors.textMuted} />
-          <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No Messages Saved</Text>
-          <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-            This reading session had no recorded chat messages.
-          </Text>
-        </View>
+        <ScrollView
+          style={styles.messagesScroll}
+          contentContainerStyle={[styles.messagesContent, { paddingBottom: insets.bottom + 90 }]}
+        >
+          {advisorNotes ? (
+            <View style={[styles.advisorNotesCard, { backgroundColor: colors.backgroundCard, borderColor: colors.primary + '35' }]}>
+              <View style={styles.advisorNotesHeader}>
+                <View style={[styles.advisorNotesIcon, { backgroundColor: colors.primary + '20' }]}>
+                  <Ionicons name="sparkles" size={18} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.advisorNotesTitle, { color: colors.textPrimary }]}>
+                    {advisorName}'s Reading Notes & Guidance
+                  </Text>
+                  <Text style={[styles.advisorNotesSub, { color: colors.textMuted }]}>
+                    Personal notes left for you after this reading
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.advisorNotesBody, { color: colors.textSecondary }]}>
+                {advisorNotes}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="chatbubble-ellipses-outline" size={48} color={colors.textMuted} />
+              <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No Messages Saved</Text>
+              <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                This reading session had no recorded chat messages.
+              </Text>
+            </View>
+          )}
+        </ScrollView>
       ) : (
         <ScrollView
           style={styles.messagesScroll}
           contentContainerStyle={[styles.messagesContent, { paddingBottom: insets.bottom + 90 }]}
         >
+          {/* Advisor's Reading & Session Notes */}
+          {advisorNotes ? (
+            <View style={[styles.advisorNotesCard, { backgroundColor: colors.backgroundCard, borderColor: colors.primary + '35' }]}>
+              <View style={styles.advisorNotesHeader}>
+                <View style={[styles.advisorNotesIcon, { backgroundColor: colors.primary + '20' }]}>
+                  <Ionicons name="sparkles" size={18} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.advisorNotesTitle, { color: colors.textPrimary }]}>
+                    {advisorName}'s Reading Notes & Guidance
+                  </Text>
+                  <Text style={[styles.advisorNotesSub, { color: colors.textMuted }]}>
+                    Personal notes left for you after this reading
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.advisorNotesBody, { color: colors.textSecondary }]}>
+                {advisorNotes}
+              </Text>
+            </View>
+          ) : null}
           {messages.map((m) => {
             const isClient = m.sender_type === 'client';
             const hasImage = !!m.image_url;
@@ -387,5 +449,39 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 15,
     fontWeight: '700',
+  },
+  advisorNotesCard: {
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.md,
+    marginBottom: SPACING.sm,
+    padding: SPACING.md,
+    borderRadius: 16,
+    borderWidth: 1.5,
+  },
+  advisorNotesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  advisorNotesIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  advisorNotesTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  advisorNotesSub: {
+    fontSize: 11,
+    marginTop: 1,
+  },
+  advisorNotesBody: {
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
   },
 });

@@ -26,8 +26,10 @@ interface ChatHistory {
   psychic_name: string;
   psychic_avatar: string | null;
   last_message: string;
-  message_count: number;
-  last_activity: string;
+  message_count?: number;
+  last_activity?: string;
+  notes?: string;
+  psychic_notes?: string;
 }
 
 interface CallHistory {
@@ -39,6 +41,8 @@ interface CallHistory {
   duration: number; // seconds
   cost: number;
   recording_url: string | null;
+  notes?: string;
+  psychic_notes?: string;
   created_at: string;
 }
 
@@ -264,7 +268,7 @@ export default function HistoryScreen() {
       <View style={styles.cardContent}>
         <View style={styles.cardHeader}>
           <Text style={[styles.name, { color: colors.textPrimary }]}>{item.psychic_name}</Text>
-          <Text style={[styles.date, { color: colors.textMuted }]}>{formatDate(item.last_activity)}</Text>
+          <Text style={[styles.date, { color: colors.textMuted }]}>{formatDate(item.last_activity || '')}</Text>
         </View>
         <Text style={[styles.lastMessage, { color: colors.textSecondary }]} numberOfLines={1}>
           {item.last_message}
@@ -272,9 +276,15 @@ export default function HistoryScreen() {
         <View style={styles.statsRow}>
           <View style={styles.stat}>
             <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
-            <Text style={[styles.statText, { color: colors.textMuted }]}>{item.message_count} messages</Text>
+            <Text style={[styles.statText, { color: colors.textMuted }]}>{item.message_count ? `${item.message_count} messages` : 'Reading session'}</Text>
           </View>
         </View>
+        {item.notes ? (
+          <View style={{ marginTop: 6, padding: 6, backgroundColor: colors.backgroundElevated, borderRadius: 8, borderLeftWidth: 2, borderLeftColor: colors.primary }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary }}>Advisor Notes:</Text>
+            <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={2}>{item.notes}</Text>
+          </View>
+        ) : null}
       </View>
       <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
     </TouchableOpacity>
@@ -299,6 +309,12 @@ export default function HistoryScreen() {
             </Text>
           </View>
         </View>
+        {item.notes ? (
+          <View style={{ marginTop: 6, padding: 6, backgroundColor: colors.backgroundElevated, borderRadius: 8, borderLeftWidth: 2, borderLeftColor: colors.primary }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary }}>Advisor Notes:</Text>
+            <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={2}>{item.notes}</Text>
+          </View>
+        ) : null}
         {item.recording_url && (
           <TouchableOpacity
             style={[styles.playButton, { backgroundColor: colors.primary + '15' }]}

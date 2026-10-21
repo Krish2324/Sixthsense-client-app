@@ -27,7 +27,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import AgoraVideoCall from '../../src/components/AgoraVideoCall';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
 const WS_URL = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://');
 
 // CLI-048: Off-platform contact leakage regex sanitizer
@@ -218,10 +218,9 @@ export default function ChatScreen() {
   // CLI-053: Delivery receipt state per message ('sent' | 'delivered')
   const [messageStatus, setMessageStatus] = useState<Record<string, 'sent' | 'delivered'>>({});
 
-  // Free 4 minutes for users with active free chat credit/minutes offer
+  // Free 4 minutes for new clients on their first chat reading
   const hasFreeChatOffer = Boolean(
-    !user?.first_reading_free_used &&
-    ((user?.free_credits || 0) > 0 || (user?.free_minutes_available || 0) > 0)
+    !user?.first_reading_free_used && (!activeServiceType || activeServiceType === 'chat')
   );
   const [isNewUser, setIsNewUser] = useState(hasFreeChatOffer);
   const [freeMinutesRemaining, setFreeMinutesRemaining] = useState(
@@ -379,6 +378,17 @@ export default function ChatScreen() {
               };
               setMessages(prev => {
                 if (prev.some(m => m.id === newMsg.id)) return prev;
+                // Deduplicate if identical sender & text arrived within 15s (echo of optimistic send)
+                const dupIdx = prev.findIndex(m =>
+                  m.sender === newMsg.sender &&
+                  m.text === newMsg.text &&
+                  Math.abs(new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 15000
+                );
+                if (dupIdx !== -1) {
+                  const updated = [...prev];
+                  updated[dupIdx] = { ...updated[dupIdx], id: newMsg.id };
+                  return updated;
+                }
                 return [...prev, newMsg];
               });
               setPsychicIsTyping(false);
@@ -476,17 +486,35 @@ export default function ChatScreen() {
                 if (!textContent && !actualImg) continue;
 
                 if (!existingIds.has(m.id)) {
-                  // Check if this image was already optimistically added
-                  const isExistingLocalImage = isImage && actualImg && prev.some(p => p.type === 'image' && (p.imageUrl === actualImg || p.text === actualImg));
-                  if (!isExistingLocalImage) {
+                  const senderRole = m.sender_id === user?.id ? 'client' : 'psychic';
+                  const msgTime = new Date(m.created_at || Date.now()).getTime();
+
+                  // Deduplicate optimistic message (same sender & text/image within 15 seconds)
+                  const optIdx = updated.findIndex(p =>
+                    p.sender === senderRole &&
+                    (isImage ? (p.imageUrl === actualImg || p.text === actualImg) : (p.text === textContent)) &&
+                    Math.abs(new Date(p.timestamp).getTime() - msgTime) < 15000
+                  );
+
+                  if (optIdx !== -1) {
+                    // Update optimistic message with official server ID to prevent duplicate
+                    updated[optIdx] = {
+                      ...updated[optIdx],
+                      id: m.id,
+                      timestamp: new Date(m.created_at || updated[optIdx].timestamp),
+                    };
+                    existingIds.add(m.id);
+                    changed = true;
+                  } else {
                     updated.push({
                       id: m.id,
                       text: isImage ? (actualImg || '') : textContent,
                       imageUrl: actualImg,
-                      sender: m.sender_id === user?.id ? 'client' : 'psychic',
+                      sender: senderRole,
                       timestamp: new Date(m.created_at || Date.now()),
                       type: isImage ? 'image' : undefined,
                     });
+                    existingIds.add(m.id);
                     changed = true;
                   }
                 }
@@ -540,7 +568,7 @@ export default function ChatScreen() {
       setPsychic(data);
       
       // Check if this user has an active free chat offer
-      const isGettingFreeTime = !user?.first_reading_free_used && ((user?.free_credits || 0) > 0 || (user?.free_minutes_available || 0) > 0);
+      const isGettingFreeTime = Boolean(!user?.first_reading_free_used && (!activeServiceType || activeServiceType === 'chat'));
       
       // Add welcome message
       const welcomeMessages: Message[] = [{
@@ -789,20 +817,37 @@ export default function ChatScreen() {
     }
   };
 
-  // Photo attachment selection with base64 encoding and instant WebSocket dispatch
-  const handleAttachImage = async () => {
+  // Photo capture (camera) and gallery selection with base64 encoding and instant WebSocket dispatch
+  const handlePickImage = async (fromCamera: boolean) => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Camera roll permissions are required to share photos.');
-        return;
+      let result;
+      if (fromCamera) {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Denied', 'Camera permissions are required to capture photos.');
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.5,
+          base64: true,
+          cameraType: ImagePicker.CameraType.back,
+        });
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Denied', 'Camera roll permissions are required to share photos.');
+          return;
+        }
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.5,
+          base64: true,
+        });
       }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.4,
-        base64: true,
-      });
+
       if (!result.canceled && result.assets[0]?.uri) {
         const imageAsset = result.assets[0];
         const msgId = `img-${Date.now()}`;
@@ -857,6 +902,8 @@ export default function ChatScreen() {
     }
   };
 
+  const handleAttachImage = () => handlePickImage(false);
+
   const sendMessage = () => {
     if (!inputText.trim() || !isSessionActive) return;
 
@@ -878,6 +925,7 @@ export default function ChatScreen() {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'message',
+        id: messageId,
         conversation_id: conversationId,
         receiver_id: psychicId,
         content: messageText,
@@ -898,6 +946,7 @@ export default function ChatScreen() {
   const sendMessageViaHttp = async (content: string, messageId: string) => {
     try {
       await apiClient.post('/api/messages/send', {
+        id: messageId,
         conversation_id: conversationId,
         sender_id: user?.id,
         receiver_id: psychicId,
@@ -1092,9 +1141,20 @@ export default function ChatScreen() {
           onContentSizeChange={scrollToBottom}
           keyboardShouldPersistTaps="handled"
         >
-          {messages.map((message) => (
-            <MessageItem key={message.id} message={message} onImagePress={(uri) => setSelectedImage(uri)} />
-          ))}
+          {messages
+            .filter((msg, idx, arr) => {
+              const firstWithId = arr.findIndex(m => m.id === msg.id);
+              if (firstWithId !== idx) return false;
+              const prevDup = arr.slice(0, idx).find(m =>
+                m.sender === msg.sender &&
+                m.text === msg.text &&
+                Math.abs(new Date(m.timestamp).getTime() - new Date(msg.timestamp).getTime()) < 10000
+              );
+              return !prevDup;
+            })
+            .map((message) => (
+              <MessageItem key={message.id} message={message} onImagePress={(uri) => setSelectedImage(uri)} />
+            ))}
           
           {/* CLI-051: Advisor typing indicator bubble */}
           {psychicIsTyping && (
@@ -1385,7 +1445,12 @@ export default function ChatScreen() {
         <View style={[styles.inputArea, { paddingBottom: insets.bottom + SPACING.sm }]}>
           {isSessionActive ? (
             <>
-              <TouchableOpacity style={styles.attachButton} onPress={handleAttachImage}>
+              {/* Camera Button (Instant Capture Front / Back) */}
+              <TouchableOpacity style={styles.attachButton} onPress={() => handlePickImage(true)}>
+                <Ionicons name="camera" size={24} color={COLORS.primary} />
+              </TouchableOpacity>
+              {/* Gallery Photo Button */}
+              <TouchableOpacity style={styles.attachButton} onPress={() => handlePickImage(false)}>
                 <Ionicons name="image" size={24} color={COLORS.textSecondary} />
               </TouchableOpacity>
               <TextInput
@@ -1676,7 +1741,7 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
   },
   attachButton: {
-    width: 44,
+    width: 38,
     height: 44,
     justifyContent: 'center',
     alignItems: 'center',

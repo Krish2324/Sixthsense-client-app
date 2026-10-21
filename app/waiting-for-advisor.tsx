@@ -19,7 +19,7 @@ import { useAuth } from '../src/context/AuthContext';
 import { apiClient } from '../src/services/api';
 import { Audio } from 'expo-av';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
 const WS_URL = BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://');
 
 export default function WaitingForAdvisorScreen() {
@@ -103,11 +103,13 @@ export default function WaitingForAdvisorScreen() {
 
   useEffect(() => {
     if (requestSentRef.current) return;
-    // CLI-064: Pre-call low-balance guard
+    // Check if eligible for 4-minute free chat reading
+    const isFreeChat = (serviceType === 'chat') && (!user?.first_reading_free_used);
     const callRate = parseFloat(rate || '3.99');
     const callMinutes = parseInt(minutes || '5');
     const estimatedCost = callRate * callMinutes;
-    if ((user?.balance || 0) < estimatedCost) {
+
+    if (!isFreeChat && (user?.balance || 0) < estimatedCost) {
       Alert.alert(
         'Insufficient Balance',
         `You need at least $${estimatedCost.toFixed(2)} for a ${callMinutes}-min session at $${callRate}/min. Please add credits first.`,

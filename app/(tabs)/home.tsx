@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { SPACING } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
@@ -23,7 +24,7 @@ import { HomeSEO } from '../../src/components/SEO';
 import NotificationBanner from '../../src/components/NotificationBanner';
 import { psychicEvents, doesPsychicMatchEvent } from '../../src/services/psychicEvents';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -295,6 +296,55 @@ export default function HomeScreen() {
       >
         {/* Notification Banner at top of home */}
         <NotificationBanner />
+
+        {/* 4 Minutes Free Chat Top Card for New Client */}
+        {(!user || !user.first_reading_free_used) && (
+          <TouchableOpacity
+            style={styles.freeChatCard}
+            activeOpacity={0.9}
+            onPress={() => {
+              if (!user) {
+                router.push('/(auth)/register');
+              } else {
+                handleFilterPress('live_chat');
+              }
+            }}
+          >
+            <LinearGradient
+              colors={['#3B185F', '#581C87', '#2A0845']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.freeChatGradient}
+            >
+              <View style={styles.freeChatContent}>
+                <View style={styles.freeChatLeft}>
+                  <View style={styles.freeChatBadge}>
+                    <Ionicons name="gift" size={13} color="#FFD700" />
+                    <Text style={styles.freeChatBadgeText}>WELCOME GIFT • 100% FREE</Text>
+                  </View>
+                  <Text style={styles.freeChatTitle}>4 Minutes Free Chat</Text>
+                  <Text style={styles.freeChatSubtitle}>
+                    Connect with any verified advisor right now. Free 4 minutes on your first chat reading!
+                  </Text>
+                  <View style={styles.freeChatButton}>
+                    <Text style={styles.freeChatButtonText}>
+                      {!user ? 'Sign Up to Claim' : 'Start Free Chat Now'}
+                    </Text>
+                    <Ionicons name="arrow-forward" size={14} color="#1A1A2E" />
+                  </View>
+                </View>
+
+                <View style={styles.freeChatRight}>
+                  <View style={styles.freeChatPill}>
+                    <Ionicons name="chatbubbles" size={24} color="#FFD700" />
+                    <Text style={styles.freeChatPillTime}>4:00</Text>
+                    <Text style={styles.freeChatPillLabel}>FREE</Text>
+                  </View>
+                </View>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
 
         {/* Active Sale Banner */}
         {activeSale && (
@@ -763,5 +813,103 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     marginRight: 8,
+  },
+  freeChatCard: {
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.md,
+    borderRadius: 18,
+    overflow: 'hidden',
+    elevation: 6,
+    shadowColor: '#6B4EAA',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FFD70060',
+  },
+  freeChatGradient: {
+    padding: SPACING.md,
+    borderRadius: 18,
+  },
+  freeChatContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  freeChatLeft: {
+    flex: 1,
+    paddingRight: SPACING.sm,
+  },
+  freeChatBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 215, 0, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginBottom: 6,
+    borderWidth: 0.5,
+    borderColor: '#FFD700',
+  },
+  freeChatBadgeText: {
+    color: '#FFD700',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  freeChatTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  freeChatSubtitle: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 12,
+    lineHeight: 16,
+    marginBottom: 10,
+  },
+  freeChatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFD700',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    alignSelf: 'flex-start',
+    gap: 6,
+  },
+  freeChatButtonText: {
+    color: '#1A1A2E',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  freeChatRight: {
+    marginLeft: SPACING.xs,
+  },
+  freeChatPill: {
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.4)',
+  },
+  freeChatPillTime: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  freeChatPillLabel: {
+    color: '#FFD700',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
 });

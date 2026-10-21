@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sixth Sense Psychics",
     "slug": "sixth-sense-psychics",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "sixthsensepsychics",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sixthsense.psychics",
-      "buildNumber": "1",
+      "buildNumber": "6",
       "usesAppleSignIn": true,
       "entitlements": {
         "com.apple.developer.applesignin": ["Default"]
@@ -48,7 +48,7 @@
         "backgroundColor": "#6B4EAA"
       },
       "package": "com.sixthsense.psychics",
-      "versionCode": 4,
+      "versionCode": 6,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "CAMERA",

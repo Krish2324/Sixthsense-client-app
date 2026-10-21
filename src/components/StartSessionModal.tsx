@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { COLORS, SPACING } from '../constants/theme';
+import { useAuth } from '../context/AuthContext';
 
 interface StartSessionModalProps {
   visible: boolean;
@@ -35,7 +36,15 @@ export default function StartSessionModal({
   serviceType,
 }: StartSessionModalProps) {
   const router = useRouter();
-  const [selectedMinutes, setSelectedMinutes] = useState<number | null>(null);
+  const { user } = useAuth();
+  const isFreeChatEligible = serviceType === 'chat' && !user?.first_reading_free_used;
+  const [selectedMinutes, setSelectedMinutes] = useState<number | null>(isFreeChatEligible ? 4 : null);
+
+  useEffect(() => {
+    if (visible) {
+      setSelectedMinutes(isFreeChatEligible ? 4 : null);
+    }
+  }, [visible, isFreeChatEligible]);
 
   const getRate = () => {
     switch (serviceType) {
@@ -64,7 +73,8 @@ export default function StartSessionModal({
     }
   };
 
-  const minuteOptions = [5, 10, 15, 20, 30].filter(m => m <= maxAffordableMinutes);
+  const standardMinutes = [5, 10, 15, 20, 30].filter(m => m <= maxAffordableMinutes);
+  const minuteOptions = isFreeChatEligible ? [4, ...standardMinutes] : standardMinutes;
 
   const handleStart = () => {
     if (selectedMinutes) {
@@ -92,6 +102,17 @@ export default function StartSessionModal({
             </TouchableOpacity>
           </View>
 
+          {/* Free Chat Welcome Banner */}
+          {isFreeChatEligible && (
+            <View style={{ backgroundColor: 'rgba(255,215,0,0.15)', borderWidth: 1, borderColor: '#FFD700', borderRadius: 12, padding: SPACING.sm, marginBottom: SPACING.md, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="gift" size={20} color="#FFD700" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#FFD700', fontWeight: '800', fontSize: 13 }}>WELCOME OFFER • 4 MIN FREE</Text>
+                <Text style={{ color: COLORS.textSecondary, fontSize: 11 }}>Enjoy your first 4 minutes of live chat completely free!</Text>
+              </View>
+            </View>
+          )}
+
           {/* Rate Info */}
           <View style={styles.rateInfo}>
             <Text style={styles.rateLabel}>Rate</Text>
@@ -102,40 +123,50 @@ export default function StartSessionModal({
           <View style={styles.balanceInfo}>
             <Ionicons name="wallet" size={18} color={COLORS.textSecondary} />
             <Text style={styles.balanceText}>Your balance: ${balance.toFixed(2)}</Text>
-            <Text style={styles.maxText}>(up to {maxAffordableMinutes} min)</Text>
+            {isFreeChatEligible ? (
+              <Text style={[styles.maxText, { color: '#FFD700', fontWeight: '700' }]}>(+4 min free)</Text>
+            ) : (
+              <Text style={styles.maxText}>(up to {maxAffordableMinutes} min)</Text>
+            )}
           </View>
 
           {/* Minute Selection */}
           <Text style={styles.selectLabel}>Select session duration:</Text>
           <View style={styles.minuteOptions}>
             {minuteOptions.length > 0 ? (
-              minuteOptions.map((mins) => (
-                <TouchableOpacity
-                  key={mins}
-                  style={[
-                    styles.minuteOption,
-                    selectedMinutes === mins && styles.minuteOptionSelected,
-                  ]}
-                  onPress={() => setSelectedMinutes(mins)}
-                >
-                  <Text
+              minuteOptions.map((mins) => {
+                const isThisFreeOpt = mins === 4 && isFreeChatEligible;
+                return (
+                  <TouchableOpacity
+                    key={mins}
                     style={[
-                      styles.minuteValue,
-                      selectedMinutes === mins && styles.minuteValueSelected,
+                      styles.minuteOption,
+                      isThisFreeOpt && { borderColor: '#FFD700', borderWidth: 1.5, backgroundColor: 'rgba(255,215,0,0.08)' },
+                      selectedMinutes === mins && styles.minuteOptionSelected,
                     ]}
+                    onPress={() => setSelectedMinutes(mins)}
                   >
-                    {mins} min
-                  </Text>
-                  <Text
-                    style={[
-                      styles.minuteCost,
-                      selectedMinutes === mins && styles.minuteCostSelected,
-                    ]}
-                  >
-                    ${(mins * rate).toFixed(2)}
-                  </Text>
-                </TouchableOpacity>
-              ))
+                    <Text
+                      style={[
+                        styles.minuteValue,
+                        isThisFreeOpt && { color: '#FFD700', fontWeight: '800' },
+                        selectedMinutes === mins && styles.minuteValueSelected,
+                      ]}
+                    >
+                      {mins} min
+                    </Text>
+                    <Text
+                      style={[
+                        styles.minuteCost,
+                        isThisFreeOpt && { color: '#FFD700', fontWeight: '800' },
+                        selectedMinutes === mins && styles.minuteCostSelected,
+                      ]}
+                    >
+                      {isThisFreeOpt ? 'FREE' : `$${(mins * rate).toFixed(2)}`}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
             ) : (
               <View style={styles.insufficientFunds}>
                 <Ionicons name="alert-circle" size={24} color={COLORS.warning} />
@@ -153,12 +184,14 @@ export default function StartSessionModal({
               disabled={!selectedMinutes}
             >
               <LinearGradient
-                colors={selectedMinutes ? [COLORS.primary, COLORS.primaryDark] : [COLORS.textMuted, COLORS.textMuted]}
+                colors={selectedMinutes === 4 && isFreeChatEligible ? ['#FFD700', '#FFA000'] : (selectedMinutes ? [COLORS.primary, COLORS.primaryDark] : [COLORS.textMuted, COLORS.textMuted])}
                 style={styles.startGradient}
               >
-                <Ionicons name={getServiceIcon() as any} size={20} color="#FFF" />
-                <Text style={styles.startText}>
-                  {selectedMinutes
+                <Ionicons name={getServiceIcon() as any} size={20} color={selectedMinutes === 4 && isFreeChatEligible ? '#1A1A2E' : '#FFF'} />
+                <Text style={[styles.startText, selectedMinutes === 4 && isFreeChatEligible && { color: '#1A1A2E', fontWeight: '800' }]}>
+                  {selectedMinutes === 4 && isFreeChatEligible
+                    ? 'Start 4 Min FREE Chat'
+                    : selectedMinutes
                     ? `Start ${selectedMinutes} min session`
                     : 'Select duration'}
                 </Text>

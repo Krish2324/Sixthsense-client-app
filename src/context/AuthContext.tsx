@@ -38,7 +38,7 @@ if (Platform.OS !== 'web') {
   }
 }
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // CLI-018: 15-min inactivity auto-logout
 const FCM_STORAGE_KEY = '@sixthsense_fcm_token';
 
@@ -48,54 +48,96 @@ console.log('AuthContext BACKEND_URL:', BACKEND_URL);
 export async function getOrCreateFcmToken(userId?: string): Promise<string | null> {
   if (Platform.OS === 'web') return null;
   try {
-    // 1. Request OS notification permissions
+    let token: string | null = null;
+
+    // 1. Request OS notification permissions & configure Android channel
     if (Notifications) {
       try {
-        const perm = await Notifications.getPermissionsAsync();
-        if (perm.status !== 'granted') {
-          await Notifications.requestPermissionsAsync();
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+        if (existingStatus !== 'granted') {
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
         }
-      } catch {}
 
-      // 2. Try native FCM / APNs device token first (works on standalone & dev-client builds)
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('default', {
+            name: 'Default',
+            importance: Notifications.AndroidImportance.MAX,
+            sound: 'default',
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#6B4EAA',
+          });
+          await Notifications.setNotificationChannelAsync('high_importance_channel', {
+            name: 'High Importance Notifications',
+            importance: Notifications.AndroidImportance.MAX,
+            sound: 'default',
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#6B4EAA',
+          });
+        }
+      } catch (permErr) {
+        console.warn('Notification permission error:', permErr);
+      }
+
+      // 2. Try native FCM device token first (standalone & dev-client builds)
       if (!isExpoGo && typeof Notifications.getDevicePushTokenAsync === 'function') {
         try {
           const deviceTokenResp = await Notifications.getDevicePushTokenAsync();
           if (deviceTokenResp?.data && typeof deviceTokenResp.data === 'string') {
-            await AsyncStorage.setItem(FCM_STORAGE_KEY, deviceTokenResp.data).catch(() => {});
-            return deviceTokenResp.data;
+            token = deviceTokenResp.data;
+            if (token) {
+              await AsyncStorage.setItem(FCM_STORAGE_KEY, token).catch(() => {});
+              console.log('✅ Real FCM Native Device Token obtained:', token.slice(0, 30));
+              return token;
+            }
           }
-        } catch {}
+        } catch (deviceTokenErr) {
+          console.warn('⚠️ getDevicePushTokenAsync error:', deviceTokenErr);
+        }
       }
 
-      // 3. Try Expo Push Token if projectId is available
+      // 3. Try Expo Push Token
       if (typeof Notifications.getExpoPushTokenAsync === 'function') {
         try {
           const projectId =
             Constants.easConfig?.projectId ||
             Constants.expoConfig?.extra?.eas?.projectId;
-          if (projectId) {
-            const expoTokenResp = await Notifications.getExpoPushTokenAsync({ projectId });
-            if (expoTokenResp?.data) {
-              await AsyncStorage.setItem(FCM_STORAGE_KEY, expoTokenResp.data).catch(() => {});
-              return expoTokenResp.data;
+          const expoTokenResp = await Notifications.getExpoPushTokenAsync(
+            projectId ? { projectId } : undefined
+          );
+          if (expoTokenResp?.data) {
+            token = String(expoTokenResp.data);
+            if (token) {
+              await AsyncStorage.setItem(FCM_STORAGE_KEY, token).catch(() => {});
+              console.log('✅ Expo Push Token obtained:', token);
+              return token;
             }
           }
-        } catch {}
+        } catch (expoTokenErr) {
+          console.warn('⚠️ getExpoPushTokenAsync error:', expoTokenErr);
+        }
       }
     }
 
-    // 4. Fallback persistent device FCM token (so Expo Go sessions always have a valid fcm_token stored in MongoDB)
+    // 4. Check cached token in AsyncStorage (only use if not a placeholder dummy)
     let storedToken = await AsyncStorage.getItem(FCM_STORAGE_KEY).catch(() => null);
-    if (!storedToken) {
+    if (storedToken && !storedToken.startsWith('fcm_device_')) {
+      return storedToken;
+    }
+
+    // 5. Fallback placeholder for Expo Go simulation only
+    if (isExpoGo) {
       const randHex = Array.from({ length: 24 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
       storedToken = `fcm_device_${Platform.OS}_${userId || 'client'}_${randHex}`;
       await AsyncStorage.setItem(FCM_STORAGE_KEY, storedToken).catch(() => {});
+      return storedToken;
     }
-    return storedToken;
+
+    return null;
   } catch (err) {
-    console.log('getOrCreateFcmToken notice:', err);
-    return `fcm_device_${Platform.OS}_${userId || 'client'}`;
+    console.warn('getOrCreateFcmToken notice:', err);
+    return null;
   }
 }
 
@@ -300,7 +342,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const AUTH_TIMEOUT_MS = 20000;
 
   const postAuth = async (path: string, body: any) => {
-    const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://192.168.29.227:8000';
+    const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://api.sixthsensepsychics.com';
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
     let response: Response;

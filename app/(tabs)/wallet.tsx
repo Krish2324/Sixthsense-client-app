@@ -52,6 +52,7 @@ export default function WalletScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'chat' | 'call' | 'credits'>('all');
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<any[]>([
     {
@@ -237,6 +238,130 @@ export default function WalletScreen() {
     }
   };
 
+  const getTransactionDetails = (t: any) => {
+    const isCredit = t.type === 'credit_purchase';
+    const isTip = t.type === 'tip';
+    const stype = (t.session_type || '').toLowerCase();
+    const desc = (t.description || '').toLowerCase();
+
+    const isAudioCall = stype === 'phone' || stype === 'voice' || stype === 'audio' || desc.includes('audio call') || desc.includes('phone call');
+    const isVideoCall = stype === 'video' || desc.includes('video call');
+    const isChat = !isCredit && !isTip && !isAudioCall && !isVideoCall;
+
+    let icon: any = 'chatbubble-ellipses';
+    let iconColor = colors.primary;
+    let iconBg = 'rgba(139, 92, 246, 0.15)';
+    let badgeType = 'Chat';
+    let title = 'Chat Reading';
+    let subtitle = t.description || 'Reading Session';
+    let isPositive = false;
+    let pillText = 'Completed';
+    let pillBg = 'rgba(139, 92, 246, 0.12)';
+    let pillColor = colors.primary;
+
+    // Duration formatting
+    let durationStr = '';
+    if (t.duration_minutes !== undefined && t.duration_minutes !== null) {
+      const m = Number(t.duration_minutes);
+      if (m >= 1) {
+        durationStr = `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)} min`;
+      } else if (t.duration_seconds) {
+        durationStr = `${t.duration_seconds}s`;
+      } else if (m > 0) {
+        durationStr = `${m.toFixed(1)} min`;
+      }
+    } else if (t.duration_seconds) {
+      durationStr = `${t.duration_seconds}s`;
+    }
+
+    const rateStr = t.rate_per_minute ? `$${Number(t.rate_per_minute).toFixed(2)}/min` : '';
+    const advisorName = t.psychic_name || (t.psychic_id ? 'Advisor' : null);
+
+    if (isCredit) {
+      icon = 'diamond';
+      iconColor = '#10B981';
+      iconBg = 'rgba(16, 185, 129, 0.15)';
+      badgeType = 'Credit';
+      title = `Added ${t.credits || Math.round(t.amount || 0)} Credits`;
+      subtitle = 'Wallet Top-Up via Stripe';
+      isPositive = true;
+      pillText = 'Success';
+      pillBg = 'rgba(16, 185, 129, 0.15)';
+      pillColor = '#10B981';
+    } else if (isAudioCall) {
+      icon = 'call';
+      iconColor = '#06B6D4';
+      iconBg = 'rgba(6, 182, 212, 0.15)';
+      badgeType = 'Audio Call';
+      title = advisorName ? `Audio Call with ${advisorName}` : 'Audio Call';
+      const parts: string[] = [];
+      if (durationStr) parts.push(durationStr);
+      if (rateStr) parts.push(rateStr);
+      subtitle = parts.length > 0 ? parts.join(' • ') : (t.description || 'Audio Call with Advisor');
+      pillText = durationStr ? `⏱ ${durationStr}` : 'Call Ended';
+      pillBg = 'rgba(6, 182, 212, 0.15)';
+      pillColor = '#06B6D4';
+    } else if (isVideoCall) {
+      icon = 'videocam';
+      iconColor = '#F59E0B';
+      iconBg = 'rgba(245, 158, 11, 0.15)';
+      badgeType = 'Video Call';
+      title = advisorName ? `Video Call with ${advisorName}` : 'Video Call';
+      const parts: string[] = [];
+      if (durationStr) parts.push(durationStr);
+      if (rateStr) parts.push(rateStr);
+      subtitle = parts.length > 0 ? parts.join(' • ') : (t.description || 'Video Call with Advisor');
+      pillText = durationStr ? `⏱ ${durationStr}` : 'Video Ended';
+      pillBg = 'rgba(245, 158, 11, 0.15)';
+      pillColor = '#F59E0B';
+    } else if (isTip) {
+      icon = 'gift';
+      iconColor = '#EC4899';
+      iconBg = 'rgba(236, 72, 153, 0.15)';
+      badgeType = 'Tip';
+      title = `Tip to ${advisorName || 'Advisor'}`;
+      subtitle = t.description || 'Advisor Gratuity';
+      pillText = 'Sent 🎁';
+      pillBg = 'rgba(236, 72, 153, 0.15)';
+      pillColor = '#EC4899';
+    } else {
+      // Chat
+      icon = 'chatbubble-ellipses';
+      iconColor = '#8B5CF6';
+      iconBg = 'rgba(139, 92, 246, 0.15)';
+      badgeType = 'Chat';
+      title = advisorName ? `Chat with ${advisorName}` : 'Chat Reading';
+      const parts: string[] = [];
+      if (durationStr) parts.push(durationStr);
+      if (rateStr) parts.push(rateStr);
+      subtitle = parts.length > 0 ? parts.join(' • ') : (t.description || 'Live Chat Reading');
+      pillText = durationStr ? `⏱ ${durationStr}` : 'Completed';
+      pillBg = 'rgba(139, 92, 246, 0.15)';
+      pillColor = '#8B5CF6';
+    }
+
+    return {
+      icon,
+      iconColor,
+      iconBg,
+      badgeType,
+      title,
+      subtitle,
+      isPositive,
+      pillText,
+      pillBg,
+      pillColor,
+      durationStr,
+      rateStr,
+      advisorName,
+      isAudioCall,
+      isVideoCall,
+      isChat,
+      isCredit,
+      isTip,
+    };
+  };
+
   const onRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -339,19 +464,29 @@ export default function WalletScreen() {
           user_id: activeUserId,
         }
       });
-      const backendBase = BACKEND_URL || 'http://192.168.29.227:8000';
+      const backendBase = BACKEND_URL || 'https://api.sixthsensepsychics.com';
       const webSuccessUrl = `${backendBase}/api/payments/checkout-success`;
 
-      const data = await apiClient.post('/api/payments/create-checkout-session', {
-        amount: Math.round(amount * 100),
-        credits: credits,
-        user_id: activeUserId,
-        app_return_url: appReturnUrl,
-        method: payMethod,
-      }).catch((err) => {
+      let checkoutRes: any = null;
+      let sessionError = '';
+      try {
+        checkoutRes = await apiClient.post('/api/payments/create-checkout-session', {
+          amount: Math.round(amount * 100),
+          credits: credits,
+          user_id: activeUserId,
+          app_return_url: appReturnUrl,
+          method: payMethod,
+        });
+      } catch (err: any) {
         console.log('Checkout session creation notice:', err);
-        return null;
-      });
+        sessionError =
+          err?.response?.data?.detail ||
+          err?.response?.data?.message ||
+          err?.message ||
+          '';
+      }
+
+      const data = checkoutRes;
 
       if (data && data.checkout_url) {
         startBalancePolling(data.session_id, credits, amount);
@@ -397,7 +532,7 @@ export default function WalletScreen() {
           await fetchTransactions();
         }
       } else {
-        const errorMsg = 'Unable to connect to payment provider. Please try again.';
+        const errorMsg = sessionError || 'Unable to connect to payment provider. Please try again.';
         (Platform.OS as string) === 'web' ? alert(errorMsg) : Alert.alert('Payment Error', errorMsg);
       }
     } catch (err: any) {
@@ -467,13 +602,13 @@ export default function WalletScreen() {
                 <Text style={styles.breakdownLabel}>Wallet Balance</Text>
                 <Text style={styles.breakdownValue}>${(user?.balance || 0).toFixed(2)}</Text>
               </View>
-              {!user?.first_reading_free_used && ((user?.free_credits || 0) > 0 || (user?.free_minutes_available || 0) > 0) && (
+              {!user?.first_reading_free_used && (
                 <>
                   <View style={styles.dividerVertical} />
                   <View style={styles.breakdownItem}>
-                    <Ionicons name="time" size={18} color="#E8A0B8" />
+                    <Ionicons name="time" size={18} color="#FFD700" />
                     <Text style={styles.breakdownLabel}>New User Bonus</Text>
-                    <Text style={[styles.breakdownValue, { color: '#E8A0B8' }]}>
+                    <Text style={[styles.breakdownValue, { color: '#FFD700' }]}>
                       4 min FREE
                     </Text>
                   </View>
@@ -487,16 +622,16 @@ export default function WalletScreen() {
         {showPayments ? (
           /* FULL PAYMENT UI FOR WEBSITE & ANDROID */
           <View style={styles.addFundsSection}>
-            {/* Show Free Minutes Banner ONLY when user has free credit / free chat offer */}
-            {!user?.first_reading_free_used && ((user?.free_credits || 0) > 0 || (user?.free_minutes_available || 0) > 0) && (
-              <View style={[styles.freeMinutesBanner, { backgroundColor: colors.primary + '15', borderColor: colors.primary }]}>
-                <Ionicons name="gift" size={28} color={colors.primary} />
+            {/* Show Free Minutes Banner ONLY when user has free chat offer */}
+            {!user?.first_reading_free_used && (
+              <View style={[styles.freeMinutesBanner, { backgroundColor: 'rgba(255,215,0,0.12)', borderColor: '#FFD700' }]}>
+                <Ionicons name="gift" size={28} color="#FFD700" />
                 <View style={styles.freeMinutesContent}>
-                  <Text style={[styles.freeMinutesTitle, { color: colors.primary }]}>
+                  <Text style={[styles.freeMinutesTitle, { color: '#FFD700' }]}>
                     🎁 4 FREE Minutes!
                   </Text>
                   <Text style={[styles.freeMinutesSubtext, { color: colors.textSecondary }]}>
-                    Your first reading includes 4 free minutes with any psychic!
+                    Your first live chat reading includes 4 free minutes with any advisor!
                   </Text>
                 </View>
               </View>
@@ -678,7 +813,7 @@ export default function WalletScreen() {
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Credits</Text>
             
             {/* Check if user has an active free chat offer */}
-            {user?.first_reading_free_used || ((user?.free_credits || 0) <= 0 && (user?.free_minutes_available || 0) <= 0) ? (
+            {user?.first_reading_free_used ? (
               /* User has used free minutes or has no free offer - direct to website */
               <View style={[styles.freeMinutesBox, { backgroundColor: colors.backgroundCard, borderColor: colors.primary }]}>
                 <Ionicons name="card-outline" size={40} color={colors.primary} />
@@ -823,13 +958,58 @@ export default function WalletScreen() {
         {/* Transaction History */}
         <View style={styles.historySection}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Transactions</Text>
-            {transactions.length > 0 && (
-              <Text style={[styles.txCountBadge, { color: colors.textSecondary }]}>
-                {transactions.length} total
+            <View>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Transaction History</Text>
+              <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+                Chat & call deductions and credit top-ups
               </Text>
+            </View>
+            {transactions.length > 0 && (
+              <View style={[styles.txCountBadgeWrapper, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}>
+                <Text style={[styles.txCountBadge, { color: colors.primary }]}>
+                  {transactions.length} total
+                </Text>
+              </View>
             )}
           </View>
+
+          {/* Filter Pills */}
+          {transactions.length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterPillsScroll} contentContainerStyle={styles.filterPillsRow}>
+              {[
+                { key: 'all', label: 'All', icon: 'list' },
+                { key: 'chat', label: 'Chat', icon: 'chatbubbles' },
+                { key: 'call', label: 'Audio & Video Calls', icon: 'call' },
+                { key: 'credits', label: 'Top-Ups', icon: 'diamond' },
+              ].map((tab) => {
+                const isSelected = historyFilter === tab.key;
+                return (
+                  <TouchableOpacity
+                    key={tab.key}
+                    onPress={() => setHistoryFilter(tab.key as any)}
+                    style={[
+                      styles.filterPill,
+                      isSelected
+                        ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                        : { backgroundColor: colors.backgroundCard, borderColor: colors.border }
+                    ]}
+                  >
+                    <Ionicons 
+                      name={tab.icon as any} 
+                      size={13} 
+                      color={isSelected ? '#FFFFFF' : colors.textSecondary} 
+                    />
+                    <Text style={[
+                      styles.filterPillText, 
+                      { color: isSelected ? '#FFFFFF' : colors.textSecondary }
+                    ]}>
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
           
           {isLoadingTransactions && transactions.length === 0 ? (
             <View style={[styles.loadingBox, { backgroundColor: colors.backgroundCard }]}>
@@ -837,47 +1017,84 @@ export default function WalletScreen() {
               <Text style={[styles.loadingBoxText, { color: colors.textSecondary }]}>Loading history...</Text>
             </View>
           ) : transactions.length > 0 ? (
-            <View style={styles.transactionsList}>
-              {transactions.map((t, idx) => {
-                const isCredit = t.type === 'credit_purchase';
+            (() => {
+              const filteredTransactions = transactions.filter((t) => {
+                const details = getTransactionDetails(t);
+                if (historyFilter === 'all') return true;
+                if (historyFilter === 'credits') return details.isCredit;
+                if (historyFilter === 'chat') return details.isChat;
+                if (historyFilter === 'call') return details.isAudioCall || details.isVideoCall;
+                return true;
+              });
+
+              if (filteredTransactions.length === 0) {
                 return (
-                  <View 
-                    key={t.id || t._id || idx} 
-                    style={[styles.transactionCard, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}
-                  >
-                    <View style={[styles.txIconCircle, { backgroundColor: isCredit ? 'rgba(16, 185, 129, 0.15)' : 'rgba(139, 92, 246, 0.15)' }]}>
-                      <Ionicons 
-                        name={isCredit ? "arrow-down-circle" : "chatbubble-ellipses"} 
-                        size={24} 
-                        color={isCredit ? "#10B981" : colors.primary} 
-                      />
-                    </View>
-                    <View style={styles.txMainInfo}>
-                      <Text style={[styles.txTitle, { color: colors.textPrimary }]}>
-                        {isCredit ? `Added ${t.credits || Math.round(t.amount)} Credits` : (t.description || 'Reading Session')}
-                      </Text>
-                      <Text style={[styles.txDate, { color: colors.textSecondary }]}>
-                        {formatDate(t.created_at)}
-                      </Text>
-                    </View>
-                    <View style={styles.txAmountCol}>
-                      <Text style={[styles.txAmountText, { color: isCredit ? '#10B981' : colors.textPrimary }]}>
-                        {isCredit ? `+$${(t.amount || 0).toFixed(2)}` : `-$${(t.amount || 0).toFixed(2)}`}
-                      </Text>
-                      <View style={styles.completedPill}>
-                        <Ionicons name="checkmark" size={11} color="#10B981" />
-                        <Text style={styles.completedPillText}>Success</Text>
-                      </View>
-                    </View>
+                  <View style={[styles.emptyHistory, { backgroundColor: colors.backgroundCard }]}>
+                    <Ionicons name="filter-outline" size={36} color={colors.textMuted} />
+                    <Text style={[styles.emptyHistoryText, { color: colors.textPrimary }]}>No transactions in this category</Text>
+                    <TouchableOpacity onPress={() => setHistoryFilter('all')} style={styles.resetFilterBtn}>
+                      <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>View All History</Text>
+                    </TouchableOpacity>
                   </View>
                 );
-              })}
-            </View>
+              }
+
+              return (
+                <View style={styles.transactionsList}>
+                  {filteredTransactions.map((t, idx) => {
+                    const info = getTransactionDetails(t);
+                    return (
+                      <View 
+                        key={t.id || t._id || idx} 
+                        style={[styles.transactionCard, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}
+                      >
+                        <View style={[styles.txIconCircle, { backgroundColor: info.iconBg }]}>
+                          <Ionicons 
+                            name={info.icon} 
+                            size={22} 
+                            color={info.iconColor} 
+                          />
+                        </View>
+                        <View style={styles.txMainInfo}>
+                          <View style={styles.txTitleRow}>
+                            <Text style={[styles.txTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                              {info.title}
+                            </Text>
+                          </View>
+                          <Text style={[styles.txSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+                            {info.subtitle}
+                          </Text>
+                          <View style={styles.txDateRow}>
+                            <Ionicons name="time-outline" size={11} color={colors.textMuted} />
+                            <Text style={[styles.txDate, { color: colors.textMuted }]}>
+                              {formatDate(t.created_at)}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.txAmountCol}>
+                          <Text style={[
+                            styles.txAmountText, 
+                            { color: info.isPositive ? '#10B981' : colors.textPrimary }
+                          ]}>
+                            {info.isPositive ? `+$${(t.amount || 0).toFixed(2)}` : `-$${(t.amount || 0).toFixed(2)}`}
+                          </Text>
+                          <View style={[styles.completedPill, { backgroundColor: info.pillBg }]}>
+                            <Text style={[styles.completedPillText, { color: info.pillColor }]}>
+                              {info.pillText}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })()
           ) : (
             <View style={[styles.emptyHistory, { backgroundColor: colors.backgroundCard }]}>
               <Ionicons name="receipt-outline" size={40} color={colors.textMuted} />
               <Text style={[styles.emptyHistoryText, { color: colors.textPrimary }]}>No transactions yet</Text>
-              <Text style={[styles.emptyHistorySubtext, { color: colors.textSecondary }]}>Your reading & credit top-up history will appear here</Text>
+              <Text style={[styles.emptyHistorySubtext, { color: colors.textSecondary }]}>Your reading, chat, audio call, video call & credit top-up history will appear here</Text>
             </View>
           )}
         </View>
@@ -1540,9 +1757,43 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#8B5CF6',
   },
+  txCountBadgeWrapper: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
   txCountBadge: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  filterPillsScroll: {
+    marginBottom: SPACING.md,
+  },
+  filterPillsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  filterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  filterPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  resetFilterBtn: {
+    marginTop: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(139, 92, 246, 0.12)',
   },
   loadingBox: {
     flexDirection: 'row',
@@ -1576,36 +1827,51 @@ const styles = StyleSheet.create({
   txMainInfo: {
     flex: 1,
     marginLeft: SPACING.md,
+    marginRight: SPACING.xs,
+  },
+  txTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   txTitle: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  txSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  txDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 3,
   },
   txDate: {
-    fontSize: 12,
-    marginTop: 3,
+    fontSize: 11,
   },
   txAmountCol: {
     alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   txAmountText: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
   },
   completedPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
     marginTop: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     borderRadius: 6,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
   },
   completedPillText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#10B981',
   },
   modalOverlay: {
     flex: 1,
