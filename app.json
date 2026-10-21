@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sixth Sense Psychics",
     "slug": "sixth-sense-psychics",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "sixthsensepsychics",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sixthsense.psychics",
-      "buildNumber": "6",
+      "buildNumber": "7",
       "usesAppleSignIn": true,
       "entitlements": {
         "com.apple.developer.applesignin": ["Default"]
@@ -28,13 +28,15 @@
         "NSPhotoLibraryAddUsageDescription": "Save session recordings",
         "NSLocationWhenInUseUsageDescription": "Find nearby psychic advisors",
         "NSFaceIDUsageDescription": "Secure login with Face ID",
-        "NSUserTrackingUsageDescription": "Personalize your psychic recommendations",
         "UIBackgroundModes": [
           "audio",
           "voip",
           "remote-notification",
-          "fetch",
-          "processing"
+          "fetch"
+        ],
+        "BGTaskSchedulerPermittedIdentifiers": [
+          "com.sixthsense.psychics.refresh",
+          "com.sixthsense.psychics.processing"
         ]
       },
       "config": {
@@ -48,7 +50,7 @@
         "backgroundColor": "#6B4EAA"
       },
       "package": "com.sixthsense.psychics",
-      "versionCode": 6,
+      "versionCode": 7,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "CAMERA",
